@@ -15,6 +15,7 @@ import (
 	"github.com/nico/jev-trans/internal/jev"
 	"github.com/nico/jev-trans/internal/jlir"
 	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico/jev-trans/internal/lex"
 	"github.com/nico/jev-trans/internal/lexgen"
 	"github.com/nico/jev-trans/internal/plan"
 	"github.com/nico/jev-trans/internal/semantics"
@@ -191,6 +192,19 @@ type EngineConfig struct {
 	// on every call. A caller that wants no oracle configures an offline client
 	// here explicitly.
 	OfflineClient *jev.Client
+	// Morph is the morphological backend registry. Nil installs the builtin
+	// analyser alone, which is the state of an environment with no external
+	// analyser configured. Exchanging the backend is a configuration change,
+	// never a code change.
+	Morph *lex.Registry
+	// MorphProfile selects which lexicon the backend should use.
+	MorphProfile lex.Profile
+	// ExternalMorph records that a morphological backend outside this package
+	// will answer. It disables the builtin historical-kana rewrite, which
+	// exists only so the in-house dictionary can cope and would destroy
+	// information an external analyser can use. SudachiDict and the 国語研
+	// old-kana UniDic builds carry ゐ and the iteration marks as entries.
+	ExternalMorph bool
 	MaxCandidates int
 	// MaxOracleCalls bounds the decision budget for one translation. Exceeding
 	// it degrades to priors rather than hanging the request.
@@ -207,6 +221,7 @@ type Engine struct {
 	mu     sync.Mutex
 	stores map[string]*discourse.Store
 	lex    *lexgen.Lexicalizer
+	morph  *lex.Registry
 }
 
 // NewEngine builds an Engine with sane defaults.
@@ -220,10 +235,15 @@ func NewEngine(cfg EngineConfig) *Engine {
 	if cfg.DefaultMode == "" {
 		cfg.DefaultMode = "auto"
 	}
+	morph := cfg.Morph
+	if morph == nil {
+		morph = lex.NewRegistry()
+	}
 	return &Engine{
 		cfg:    cfg,
 		stores: map[string]*discourse.Store{},
 		lex:    lexgen.Default(),
+		morph:  morph,
 	}
 }
 

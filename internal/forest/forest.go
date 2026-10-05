@@ -62,6 +62,50 @@ const (
 	ScriptOther    Script = "other"
 )
 
+// posTags maps the Universal POS tag set — the one Sudachi, MeCab and UniDic all
+// speak — onto the coarse parts of speech the pipeline reasons about. The
+// mapping is deliberately lossy: the JLIR needs to know a token is a verb or a
+// noun, not which cell of the JPOS grid it came from.
+var posTags = map[string]POS{
+	"名詞": POSNoun, "普通名詞": POSNoun, "固有名詞": POSProper, "人名": POSProper,
+	"地名": POSProper, "組織名": POSProper, "動詞": POSVerb, "形容詞": POSAdj,
+	"形状詞": POSAdj, "副詞": POSAdv, "連体詞": POSAdj, "助詞": POSParticle,
+	"助動詞": POSAux, "接続詞": POSConj, "感動詞": POSInterj, "連体化": POSNoun,
+	"N": POSProper, "名詞-普通名詞": POSNoun, "名詞-固有名詞": POSProper,
+	"名詞-人名": POSProper, "名詞-地名": POSProper, "動詞-一般": POSVerb,
+	"動詞-非自立可能": POSAux, "形容詞-一般": POSAdj, "形状詞-一般": POSAdj,
+	"副詞-一般": POSAdv, "助詞-格助詞": POSParticle, "助詞-係助詞": POSParticle,
+	"助詞-副助詞": POSParticle, "助詞-接続助詞": POSParticle, "助詞-終助詞": POSParticle,
+	"助動詞-助動詞-一般": POSAux, "助動詞-助動詞-過去": POSAux,
+	"接頭辞": POSAffix, "接尾辞": POSAffix, "記号": POSPunct, "空白": POSPunct,
+}
+
+// internalPOS is the set of coarse parts of speech, so a backend that already
+// speaks this vocabulary (the builtin one does) round-trips unchanged instead
+// of being re-interpreted as a Universal tag it is not.
+var internalPOS = func() map[string]POS {
+	m := make(map[string]POS, 16)
+	for _, p := range []POS{
+		POSNoun, POSProper, POSPronoun, POSVerb, POSAux, POSAdj, POSAdv,
+		POSParticle, POSPunct, POSNum, POSInterj, POSAffix, POSUnknown,
+	} {
+		m[string(p)] = p
+	}
+	return m
+}()
+
+// POSByTag maps a Universal POS tag to a coarse part of speech. A tag that is
+// already one of ours passes through. An unmapped tag is a genuinely unknown POS
+// rather than an error, so it falls back to POSUnknown and the surface stays
+// analyzable.
+func POSByTag(tag string) (POS, bool) {
+	if p, ok := internalPOS[tag]; ok {
+		return p, true
+	}
+	p, ok := posTags[tag]
+	return p, ok
+}
+
 // Morph is one node of the morphological lattice. Surface, dictionary form,
 // semantic lemma and morphological features are all separate, because the
 // projection stage needs tense and aspect recovered from inflection rather

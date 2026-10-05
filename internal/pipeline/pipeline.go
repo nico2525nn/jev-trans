@@ -69,7 +69,7 @@ func (e *Engine) Translate(ctx context.Context, req Request) (*Response, error) 
 	// ---- 1. INPUT NORMALIZATION -------------------------------------------
 	var norm string
 	rec.Do(trace.StageNormalize, "input normalization", func(s *trace.Span) error {
-		norm = normalizeInput(s, req.Text)
+		norm = normalizeInput(s, req.Text, e.cfg.ExternalMorph)
 		s.Data(map[string]any{"input": req.Text, "normalized": norm})
 		return nil
 	})
@@ -88,6 +88,8 @@ func (e *Engine) Translate(ctx context.Context, req Request) (*Response, error) 
 	// been told about 住む.
 	lexicon.Default()
 
+	var backends []string
+	var prof lex.Profile
 	rec.Do(trace.StageMorph, "morphological lattice", func(s *trace.Span) error {
 		// The plain entry points are used deliberately: this stage already owns
 		// a span and attaches the lattice to it, so an inner span would
@@ -95,10 +97,14 @@ func (e *Engine) Translate(ctx context.Context, req Request) (*Response, error) 
 		// that want the nested spans.
 		switch req.SourceLang {
 		case lang.JA:
-			mf = lex.AnalyzeJA(norm)
+			mf, prof, backends = e.analyzeJapanese(ctx, s, norm)
 		default:
 			mf = lex.AnalyzeEN(norm)
 		}
+		for _, b := range backends {
+			s.Label("analyzer", b)
+		}
+		_ = prof
 		if mf == nil {
 			return errors.New("morphological analyzer returned nothing")
 		}
@@ -460,6 +466,37 @@ func (e *Engine) planRequest(ctx context.Context, req Request, g *jlir.Graph, de
 			// makes the planner record a gap instead.
 			return "", 0, "unresolved"
 		},
+	}
+}
+
+// analyzeJapanese runs the morphological stage through the backend registry.
+//
+// Which backend answered is recorded on the span with its version, dictionary
+// and the profile it was asked for. That is not decoration: an analysis from
+// the builtin 800-surface dictionary and one from SudachiDict are different
+// evidence, and a run that silently fell back to the weaker analyser has to be
+// distinguishable from one that did not.
+func (e *Engine) analyzeJapanese(ctx context.Context, s *trace.Span, text string) (*forest.MorphForest, lex.Profile, []string) {
+	profile := e.cfg.MorphProfile
+	if profile == "" || !profile.Valid() {
+		profile = lex.ProfileAuto
+	}
+	an, err := e.morph.Analyze(ctx, text, profile, lang.JA)
+	if err != nil || an == nil {
+		// The registry already tried every registered backend, so a further
+		// silent fallback would hide a configuration problem.
+		s.Note("every morphological backend failed (%v); using the builtin analyser", err)
+		s.Status(trace.StatusWarn)
+		mf := lex.AnalyzeJAIn(ctx, text)
+		return mf, lex.ProfileModern, []string{"builtin (fallback)"}
+	}
+	s.Label("profile", string(an.Profile))
+	s.Detail("%s %s, dictionary %s, %d tokens",
+		an.Backend, an.BackendVersion, an.Dictionary, len(an.Tokens))
+	s.Count("tokens", len(an.Tokens))
+	s.Count("unresolved", len(an.Unresolved()))
+	return an.Lattice(text), an.Profile, []string{
+		fmt.Sprintf("%s/%s/%s", an.Backend, an.BackendVersion, an.Dictionary),
 	}
 }
 
@@ -896,7 +933,7 @@ func voiced(r rune) rune {
 // the ideographic space, and pre-1946 kana orthography. Punctuation is left
 // alone, because plan.md §7 requires the JLIR to keep source-specific
 // material.
-func normalizeInput(s *trace.Span, in string) string {
+func normalizeInput(s *trace.Span, in string, externalMorph bool) string {
 	var b strings.Builder
 	b.Grow(len(in))
 	changed := 0
@@ -913,7 +950,12 @@ func normalizeInput(s *trace.Span, in string) string {
 		}
 	}
 	out := strings.TrimSpace(b.String())
-	if out != "" {
+	// Historical kana are rewritten only when no external analyser is going to
+	// handle them. SudachiDict and the 国語研 old-kana UniDic builds carry ゐ and
+	// the iteration marks as dictionary entries, so rewriting first would destroy
+	// information the better analyser could have used. That is why the rewrite
+	// is a builtin-backend fallback, not a preprocessing step.
+	if out != "" && !externalMorph {
 		if fixed, kana := normalizeHistoricalKana(out); kana > 0 {
 			s.Note("rewrote %d pre-1946 kana character(s) to the modern spelling "+
 				"(ゐ→い, ゑ→え, ふ→う, iteration marks expanded)", kana)

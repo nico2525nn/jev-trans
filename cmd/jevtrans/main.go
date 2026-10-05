@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/nico/jev-trans/internal/jev"
 	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico/jev-trans/internal/lex"
 	"github.com/nico/jev-trans/internal/lexicon"
 	"github.com/nico/jev-trans/internal/ontology"
 	"github.com/nico/jev-trans/internal/pipeline"
@@ -75,12 +77,36 @@ func cmdServe(args []string) error {
 	addr := fs.String("addr", "", "listen address (default $JEV_ADDR or 127.0.0.1:8080)")
 	model := fs.String("model", "jev-1.13-free", "oracle model id")
 	offline := fs.Bool("offline", false, "never call the oracle, use priors only")
+	morph := fs.String("morph", "auto",
+		"morphological backend: builtin, or a command speaking the analysis protocol")
+	dict := fs.String("sudachi-dict", "core", "SudachiDict build to use when the sudachi backend is available")
+	profile := fs.String("morph-profile", "auto",
+		"lexicon profile: auto | modern | modern-literary | old-kana-colloquial")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	client := jev.New(jev.Options{Model: *model, Offline: *offline})
-	engine := pipeline.NewEngine(pipeline.EngineConfig{Jev: client})
+	registry := lex.NewRegistry()
+	external := false
+	if *morph != "builtin" && *morph != "auto" {
+		registry.Register(lex.NewProcessAnalyzer(lex.ProcessConfig{
+			Command: *morph, Name: *morph, Profiles: nil,
+		}))
+		external = true
+	} else if *morph == "auto" {
+		// Auto registers Sudachi when it is actually usable and silently keeps
+		// the builtin otherwise. A configured-but-missing analyser is reported
+		// rather than treated as absent, because the two mean different things.
+		if lex.Available("python3") && sudachiUsable() {
+			registry.Register(lex.NewProcessAnalyzer(lex.SudachiConfig(*dict)))
+			external = true
+		}
+	}
+	engine := pipeline.NewEngine(pipeline.EngineConfig{
+		Jev: client, Morph: registry, ExternalMorph: external,
+		MorphProfile: lex.Profile(*profile),
+	})
 	srv := server.New(server.Config{Engine: engine, Jev: client, Addr: *addr})
 
 	if !client.Enabled() {
@@ -378,4 +404,17 @@ func cmdLex(args []string) error {
 		fmt.Printf("  term %s -> %s (forbidden: %s)\n", t.Concept, t.Preferred, strings.Join(t.Forbidden, ", "))
 	}
 	return nil
+}
+
+// sudachiUsable reports whether the Sudachi backend can actually answer here.
+// It runs the reference adapter's self-test once at startup, because a backend
+// that imports but cannot build its dictionary would otherwise look configured
+// and fail on every sentence.
+func sudachiUsable() bool {
+	cmd := exec.Command("python3", "tools/sudachi_backend.py", "--selftest", "今日はいい天気ですね。")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "'")
 }
