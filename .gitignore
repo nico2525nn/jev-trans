@@ -1,0 +1,9 @@
+# Build cache and tool scratch. The machine's /tmp is quota-limited, so the Go
+# cache lives here; see CONTRACTS.md.
+.go/
+
+# Local build output
+/jevtrans
+
+# Captured API responses used while developing the UI
+/samples/

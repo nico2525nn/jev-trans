@@ -1,0 +1,27 @@
+# Normalize line endings for text source; keep Japanese files as UTF-8.
+* text=auto eol=lf
+
+*.go    text
+*.js    text
+*.css   text
+*.html  text
+*.md    text
+*.json  text
+
+# The lexicon and predicate tables are large Go files of mostly Japanese
+# literals. Diffing them as text is useful, but merging them is not, so treat
+# them as generated: take the whole file on any conflict rather than producing
+# an unresolvable textual merge.
+internal/lex/morphja_data.go    linguist-generated=true
+internal/lex/morphen_data.go    linguist-generated=true
+internal/lexicon/data_jp.go     linguist-generated=true
+internal/lexicon/data_en.go     linguist-generated=true
+internal/lexgen/data.go         linguist-generated=true
+internal/ontology/senses.go     linguist-generated=true
+internal/plan/constructions_data.go linguist-generated=true
+
+# Binary and non-source assets
+*.png   binary
+*.jpg   binary
+*.webp  binary
+*.woff  binary

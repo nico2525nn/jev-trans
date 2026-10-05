@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JEV-Trans — constraint circuit</title>
+<!-- Inline favicon: the server embeds static files only, so an external icon
+     would be a 404 on every page load. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d1117'/%3E%3Cpath d='M7 21h5l2-9 3 12 2.5-8 1.5 5h4' fill='none' stroke='%2352d1a4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand">
+    <span class="brand-mark">JEV-TRANS</span>
+    <span class="brand-sub">the model does not write the translation; it resolves the ambiguity the translation needs</span>
+  </div>
+
+  <div id="health" class="health health-unknown" role="status" aria-live="polite">
+    <span class="health-dot"></span>
+    <span class="health-text">checking /api/health…</span>
+    <span class="health-meta"></span>
+  </div>
+</header>
+
+<form id="controls" autocomplete="off">
+  <div class="ctl ctl-lang">
+    <label for="srcLang">source</label>
+    <select id="srcLang" name="sourceLang">
+      <option value="ja" selected>日本語 ja</option>
+      <option value="en">English en</option>
+    </select>
+  </div>
+  <div class="ctl ctl-arrow" aria-hidden="true">→</div>
+  <div class="ctl ctl-lang">
+    <label for="tgtLang">target</label>
+    <select id="tgtLang" name="targetLang">
+      <option value="en" selected>English en</option>
+      <option value="ja">日本語 ja</option>
+    </select>
+  </div>
+
+  <div class="ctl ctl-text">
+    <label for="srcText">source text</label>
+    <textarea id="srcText" name="text" rows="2" spellcheck="false" placeholder="太郎が花子に本を渡した。"></textarea>
+  </div>
+
+  <div class="ctl ctl-slider">
+    <label for="politeness">politeness <output id="politenessOut">0.50</output></label>
+    <input type="range" id="politeness" name="politeness" min="0" max="1" step="0.05" value="0.5">
+  </div>
+
+  <div class="ctl ctl-select">
+    <label for="register">register</label>
+    <select id="register" name="register">
+      <option value="neutral" selected>neutral</option>
+      <option value="formal">formal</option>
+      <option value="casual">casual</option>
+      <option value="technical">technical</option>
+      <option value="literary">literary</option>
+    </select>
+  </div>
+
+  <div class="ctl ctl-slider">
+    <label for="pronoun">pronoun explicitness <output id="pronounOut">0.30</output></label>
+    <input type="range" id="pronoun" name="pronounExplicitness" min="0" max="1" step="0.05" value="0.3">
+  </div>
+
+  <div class="ctl ctl-select">
+    <label for="mode">mode</label>
+    <select id="mode" name="mode">
+      <option value="interactive" selected>interactive</option>
+      <option value="auto">auto</option>
+      <option value="strict">strict</option>
+    </select>
+  </div>
+
+  <div class="ctl ctl-buttons">
+    <button type="submit" id="btnTranslate" class="btn btn-primary">Translate</button>
+    <button type="button" id="btnReset" class="btn">Reset document</button>
+  </div>
+</form>
+
+<div id="banner" class="banner" hidden></div>
+
+<main id="workspace">
+  <section id="circuitPane" class="pane pane-circuit">
+    <div class="pane-head">
+      <h2>circuit</h2>
+      <span class="pane-head-meta" id="circuitMeta">no run yet</span>
+    </div>
+    <div class="circuit-scroll" id="circuitScroll">
+      <svg id="circuit" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="pipeline circuit"></svg>
+    </div>
+    <div class="stage-detail" id="stageDetail">
+      <div class="empty">
+        <p class="empty-title">no stage selected</p>
+        <p class="empty-body">Click any node of the circuit to read that stage's span: its title, status,
+        duration, labels, notes and the raw event payload it attached.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="inspector" class="pane pane-inspector">
+    <nav class="tabs" id="tabs" role="tablist">
+      <button type="button" class="tab is-active" data-tab="output" role="tab"
+        data-empty="The selected target string with its status, the six loss dimensions, the per-feature confidence breakdown, and every alternative candidate.">Output</button>
+      <button type="button" class="tab" data-tab="jlir" role="tab"
+        data-empty="The 9-layer intermediate representation of source and target: entity and event nodes, role edges, referent distributions and per-feature provenance.">JLIR</button>
+      <button type="button" class="tab" data-tab="morph" role="tab"
+        data-empty="The morphological lattice: every competing segmentation of the source, as rows of token cells coloured by part of speech.">Morph</button>
+      <button type="button" class="tab" data-tab="syntax" role="tab"
+        data-empty="The winning clause parse: matrix predicate, case-marked arguments, topic versus subject, zero arguments, tense, politeness and mood.">Syntax</button>
+      <button type="button" class="tab" data-tab="forest" role="tab"
+        data-empty="The packed realization forest as a DAG, every hard-constraint rejection with the rule that killed it, and the surviving source readings with their weights.">Forest</button>
+      <button type="button" class="tab" data-tab="decisions" role="tab"
+        data-empty="The complete decision audit trail D0–D9: question, options, probability distribution, winner, confidence and provenance of the answer.">Decisions</button>
+      <button type="button" class="tab" data-tab="document" role="tab"
+        data-empty="Discourse state carried across sentences: entities with salience, alias chains, topic and focus stacks, timeline and style.">Document</button>
+    </nav>
+    <div class="panel-toolbar">
+      <span class="panel-title" id="panelTitle">Output</span>
+      <button type="button" id="btnInspect" class="btn btn-ghost" aria-pressed="false">inspect JSON</button>
+    </div>
+    <div id="panel" class="panel-body" role="tabpanel"></div>
+  </section>
+</main>
+
+<script src="graph.js"></script>
+<script src="panels.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
