@@ -264,4 +264,9 @@ internal/
 
 ## ライセンス
 
-未設定です。公開する前に選択してください。
+[Apache License 2.0](LICENSE) — Copyright 2026 nico2525nn
+（詳細は [NOTICE](NOTICE)）
+
+判断モデルとして利用する Jev / OpenCode Zen は実行時に外部サービスへ
+接続しますが、同梱していません。`OPENCODE_API_KEY` が未設定の場合は
+ネットワーク要求を一切行いません。
