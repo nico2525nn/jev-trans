@@ -223,6 +223,16 @@ func (p *jaParse) segment() []jaSpan {
 			cur.from = i
 			started = true
 		}
+		// A bare tense or polarity auxiliary is not a clause head. Sudachi
+		// splits 渡した into 渡し + た, and treating た as its own predicate
+		// produced a second clause with an unresolved predicate while the
+		// subject of the first went unbound. The auxiliary belongs to the verb
+		// it follows, which is what Japanese does.
+		if jaIsPureTenseAuxiliary(m) && cur.matrix >= 0 {
+			cur.aux = append(cur.aux, i)
+			cur.to = i
+			continue
+		}
 		if jaIsFinitePredicate(m) {
 			switch {
 			case cur.matrix < 0:
@@ -1173,4 +1183,34 @@ func jaFirstNote(notes []string) string {
 		return ""
 	}
 	return notes[0]
+}
+
+// jaPureTenseAuxiliaries are the surfaces that carry only tense, polarity or
+// mood and never a predicate of their own.
+var jaPureTenseAuxiliaries = map[string]bool{
+	"た": true, "だ": true, "です": true, "ます": true, "ました": true,
+	"ません": true, "ませんでした": true, "ない": true, "なかった": true,
+	"なかったです": true, "でしょう": true, "ますか": true, "ましょう": true,
+	"て": true, "で": true, "ながら": true, "ので": true, "ば": true,
+	"たら": true, "たり": true, "たりする": true,
+}
+
+// jaIsPureTenseAuxiliary reports whether m is only a tense/polarity marker.
+//
+// The test requires an auxiliary or an empty-verb reading: a noun ending in た
+// that the dictionary knows is a noun, and calling it an auxiliary would erase
+// the clause head.
+func jaIsPureTenseAuxiliary(m *forest.Morph) bool {
+	if m == nil {
+		return false
+	}
+	surface := m.Surface
+	if !jaPureTenseAuxiliaries[surface] {
+		return false
+	}
+	if m.POS == forest.POSAux {
+		return true
+	}
+	// A verb-reading token that is only the auxiliary string is one too.
+	return m.POS == forest.POSVerb && surface != "て" || m.POS == forest.POSParticle
 }
