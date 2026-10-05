@@ -167,7 +167,7 @@ func build() *Lexicon {
 	// its own init; RegisterJapaneseVerb rebuilds the index.
 	for _, part := range jaTables {
 		for _, e := range part {
-			if looksLikeJapaneseVerb(e.Base) {
+			if looksLikeJapaneseVerb(e.Base, e.Spec) {
 				lex.RegisterJapaneseVerb(e.Base)
 			}
 		}
@@ -826,18 +826,48 @@ var enIrregularReverse = func() map[string]string {
 	return m
 }()
 
-// looksLikeJapaneseVerb is the orthographic test for a verb lemma. It is a
-// filter, not a decision: registering a non-verb here only adds a dictionary
-// entry the analyzer would have produced anyway from its own tables.
+// verbFamilies are the ontology families that denote events. A dictionary
+// base whose senses are all eventive is a verb; anything else is a noun.
+//
+// This replaced a hand-written list of leading kanji, which was both
+// incomplete (住, 起 and 眠 were missed) and arbitrary. Deriving the
+// predicate class from the predicate inventory means a base added to the
+// lexicon is classified the moment its senses are, with no second list to
+// keep in step.
+var verbFamilies = map[string]bool{
+	"MOVE": true, "RUN": true, "CHANGE": true, "COMMUNICATE": true,
+	"MENTAL": true, "PERCEIVE": true, "FEEL": true, "SLEEP": true,
+	"WEATHER": true, "CONSUME": true, "TRANSFER": true, "HAVE": true,
+	"EXIST": true, "WORK": true, "MEET": true, "MODAL": true,
+}
 
-// looksLikeJapaneseVerb is the orthographic test for a verb lemma.
-func looksLikeJapaneseVerb(base string) bool {
+// looksLikeJapaneseVerb reports whether a dictionary base is a verb, decided
+// by the ontology families its senses belong to rather than by its spelling.
+func looksLikeJapaneseVerb(base string, spec string) bool {
 	if base == "" {
 		return false
 	}
-	r := []rune(base)[0]
-	if r == 'す' && (len([]rune(base)) == 1 || strings.HasPrefix(base, "する")) {
-		return true
+	for _, hit := range parseSpec(spec, "probe") {
+		if verbFamilies[familyOfSense(hit.SenseID)] {
+			return true
+		}
 	}
-	return strings.ContainsRune("来居住読書行言見食飲買売教勉働休待立座歩走泳登降開閉持使作知思話語呼住死生着寝起飛返帰送届渡眠習遊楽笑泣止始終続変増減進出入乗切貼拭買売取得-selected-by-sense-only", r)
+	return false
+}
+
+// familyOfSense returns the ontology family of a sense id ("TRANSFER.01" ->
+// "TRANSFER"). It uses the registry rather than string surgery so a family
+// name is never misspelled.
+func familyOfSense(id string) string {
+	s, ok := ontology.Default().Sense(id)
+	if !ok {
+		if i := strings.Index(id, "."); i > 0 {
+			return id[:i]
+		}
+		return id
+	}
+	if p := s.Parent(); p != "" {
+		return p
+	}
+	return s.ID
 }
