@@ -86,13 +86,13 @@ MORPHOLOGICAL LATTICE ──► PACKED SYNTACTIC FOREST ──► SOURCE SEMANTI
 
 ### 保存と実現を分離する
 
-`entity = speaker` などの意味的指示は日本語で表层_stringsがゼロでも保たれます。
-意味の保存と表層の保存は別の性質として扱います。
+`entity = speaker` などの意味的指示は、日本語では表層が文字列ゼロでも
+保たれます。意味の保存と表層の保存は別の性質として扱います。
 
 ### 情報を追加しない
 
 意味的な特徴には必ず由来（provenance）が付きます。原文が支持しない内容を
-Targetが主張した場合、その候補は `UNSUPPORTED` として却下されます。
+対象言語が主張した場合、その候補は `UNSUPPORTED` として却下されます。
 
 ```
 「先生が来た。」 → "The teacher arrived."   → 受理、pragmatic 損失として記録
