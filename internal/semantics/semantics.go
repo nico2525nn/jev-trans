@@ -1320,20 +1320,38 @@ func (a *analyzer) zeroEntity(span jlir.Span) *jlir.Entity {
 		"argument with no overt realization; antecedent undecided"))
 	e.Aliases = append(e.Aliases, jlir.Alias{Surface: "∅", Lang: a.src, Span: &span, Kind: "zero"})
 
+	// Recency decay: the MOST RECENT overt referent is the likeliest
+	// antecedent. This used to iterate a.order in mention order and assign
+	// 1/(i+1), which gave the first-mentioned entity 1.0 and the most recent
+	// 1/n — the decay ran backwards, and a sentence whose only overt entity
+	// came first produced a degenerate {UNKNOWN: 1.0}.
+	//
+	// The prior is intentionally flat across the overt mentions. The discourse
+	// store's salience model is what knows that a Japanese clause prefers the
+	// previous clause's subject; this layer only knows what this sentence
+	// mentions, and inventing a discourse prior here would double-count it.
 	weights := map[string]float64{}
-	for i, id := range a.order {
+	n := 0
+	for _, id := range a.order {
 		cand := a.jb.G.Entity(id)
 		if cand == nil || cand.Zero {
 			continue
 		}
-		// Recency decays: the most recent overt referent is the likeliest
-		// antecedent, but earlier ones stay in the option set — plan.md §15
-		// explicitly refuses winner-takes-all.
-		weights[string(id)] = 1 / float64(i+1)
+		n++
+		weights[string(id)] = 1
 	}
-	weights[unknownReferent] = 0.35
+	if n == 0 {
+		// Nothing in this sentence can be the antecedent. Saying so is correct;
+		// inventing a mass out of nothing is not.
+		weights[unknownReferent] = 1
+	} else {
+		// An unresolved option must stay reachable: plan.md §15 keeps earlier
+		// referents in the set rather than taking a winner.
+		weights[unknownReferent] = 0.35
+	}
 	d := jlir.NewDistribution("prior:recency", weights)
-	d.Provenance = "prior: recency over overt mentions in the sentence"
+	d.Provenance = "prior: flat over overt mentions in this sentence; " +
+		"discourse salience is applied by the document store"
 	e.Referent = d
 	e.Features = append(e.Features, jlir.Feature{
 		Key: "referent_candidates", Value: append([]string(nil), d.Options...), Confidence: 0.4,

@@ -27,6 +27,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/nico/jev-trans/internal/lex"
 	"github.com/nico/jev-trans/internal/ontology"
 )
 
@@ -160,10 +161,21 @@ func build() *Lexicon {
 			if len(hits) == 0 {
 				continue
 			}
-			surfaces := append([]string{e.Base}, e.Forms...)
-			if e.Kind != "" {
-				surfaces = append(surfaces, jaForms(e.Base, e.Kind)...)
-			}
+			// The conjugations come from the analyzer (lex.JAConjugations), not
+			// from a second engine here. This package used to keep its own
+			// jaForms / godanForms copy of the Japanese conjugation tables, and
+			// the two copies disagreed: the copy hardcoded the く-row te-form as
+			// いて, so 行く got 行いて indexed beside the correct 行って. One
+			// engine, one answer.
+			//
+			// A row whose base the analyzer does not know contributes only its
+			// explicit Forms list. That is a smaller index than before and an
+			// accurate one; the way to widen it is to add the verb to the
+			// analyzer's tables, not to re-derive the forms here.
+			surfaces := make([]string, 0, 32)
+			surfaces = append(surfaces, e.Base)
+			surfaces = append(surfaces, e.Forms...)
+			surfaces = append(surfaces, lex.JAConjugations(e.Base)...)
 			for _, s := range surfaces {
 				if s == "" {
 					continue
@@ -322,30 +334,24 @@ func (l *Lexicon) reachableSenses() int {
 // SensesJP returns the weighted sense candidates for a Japanese surface form,
 // or nil when the form is not in the lexicon.
 //
-// Lookup order: exact surface, then a generated conjugation, then a
-// longest-prefix search over registered base forms. The prefix search exists
-// because okurigana and compound boundaries vary (書いて+いる vs 書いている);
-// it never invents a reading, it only tolerates a suffix the tables missed.
+// The lookup is an exact surface match, and nothing else. Inflected forms are
+// in the index because they were generated from their base form by the
+// analyzer's own conjugation tables (see build), so a surface that is not
+// registered really is a form this lexicon has no predicate for.
+//
+// It used to fall back to a longest-prefix search over registered bases, with
+// no check on the remainder it dropped. That made it reinterpret nouns as
+// verbs: 行く先 ("destination") resolved to MOVE.01 and 買った本 ("the book I
+// bought") to TRANSFER.05, because both begin with a registered verb. A
+// lookup that answers a question about a word with a reading of a different
+// word is worse than no answer (plan.md §25: unresolved beats invented), so the
+// fallback is gone rather than restricted.
 func (l *Lexicon) SensesJP(surface string) []SenseHit {
 	if l == nil || surface == "" {
 		return nil
 	}
 	if hits, ok := l.jp[surface]; ok {
 		return copyHits(hits)
-	}
-	// Conjugated forms were indexed from the base form already; this covers the
-	// ones the generator missed.
-	if base, ok := jaBaseForm(surface); ok {
-		if hits, found := l.jp[base]; found {
-			return copyHits(hits)
-		}
-	}
-	// Longest registered prefix that leaves at least one kana behind.
-	r := []rune(surface)
-	for n := len(r) - 1; n >= 2; n-- {
-		if hits, ok := l.jp[string(r[:n])]; ok {
-			return copyHits(hits)
-		}
 	}
 	return nil
 }
@@ -487,9 +493,19 @@ func (l *Lexicon) Stats() Stats {
 
 // entry is one row of a surface table. Spec holds compact "ID:weight" items
 // separated by whitespace or commas, e.g. "MOVE.01:0.9 MOVE.04:0.15".
+//
+// There is deliberately no conjugation-class field. A Japanese row used to
+// carry one (v1, v5u, adj, …) and this package generated the forms from it with
+// its own copy of the conjugation tables. That copy drifted from the analyzer's
+// — the く-row te-form was hardcoded as いて, so 行く got 行いて indexed — and
+// the class annotations drifted too: 帰る was labelled ichidan, which indexed
+// 帰た, 帰ます and 帰たい for a godan る verb.
+//
+// The analyzer now owns the class (lex.JAConjugations) and this table owns only
+// the senses, which is the split plan.md §10 asks for. Forms lists the
+// surfaces no forward table produces.
 type entry struct {
 	Base  string // Japanese dictionary form, or English lemma
-	Kind  string // Japanese inflection class: "", v1, v5*, adj, cop
 	Forms []string
 	Spec  string
 }
@@ -788,159 +804,3 @@ var enIrregularReverse = func() map[string]string {
 	}
 	return m
 }()
-
-// -----------------------------------------------------------------------------
-// Japanese inflection
-// -----------------------------------------------------------------------------
-
-// jaForms generates the surface forms a Japanese base can appear in, so that a
-// caller may hand us either the surface or the dictionary form.
-//
-// Only regular classes are generated. The irregular verbs (する/くる, the
-// copulas) and the e-row verbs whose te-form drops a kana (疲れる, 入れる …)
-// list their forms explicitly in the table instead: a missing form falls through
-// to the prefix search, whereas a wrong generated form answers the question
-// with a form the source never contained.
-func jaForms(base, kind string) []string {
-	if base == "" {
-		return nil
-	}
-	switch kind {
-	case "v1": // ichidan: the stem is the base minus る
-		if strings.HasSuffix(base, "する") {
-			// 勉強する conjugates like 五段 in everything but the last kana and
-			// the tables class it with the ichidan verbs. Detect it here rather
-			// than repeating a Kind on every する row.
-			return surForms(base)
-		}
-		st := strings.TrimSuffix(base, "る")
-		if st == base {
-			return nil
-		}
-		// Both た and った are generated: 見る → 見た but 帰る → 帰った, and
-		// which one applies is not predictable from the dictionary form alone.
-		out := []string{
-			base,
-			st + "ない", st + "なかった", st + "ないです", st + "ません", st + "ませんでした",
-			st + "ます", st + "ました", st + "ましょう",
-			st + "て", st + "た", st + "った", st + "たら", st + "ったら", st + "たり", st + "ったり",
-			st + "たい", st + "られる", st + "よう", st + "なさい",
-			// An ichidan verb has two negative shapes, 食べない and 帰らない,
-			// the second for stems in the え/や/い rows. Which one applies is a
-			// property of the verb, not of its dictionary form's final kana, so
-			// both are generated; the unused one is a form no tokenizer emits.
-			st + "らない", st + "らなかった", st + "られません",
-		}
-		return out
-	case "v5a", "v5i", "v5u", "v5e", "v5k", "v5g", "v5s", "v5t", "v5n", "v5b", "v5m", "v5r", "v5w":
-		return godanForms(base)
-	case "adj": // い-adjective: the stem is the base minus い
-		st := strings.TrimSuffix(base, "い")
-		if st == base {
-			return nil
-		}
-		return []string{
-			base, st + "い", st + "かった", st + "くて", st + "くない", st + "くなかった",
-			st + "さ", st + "そう", st + "ければ",
-		}
-	default:
-		return nil
-	}
-}
-
-// surForms expands a …する verb: the stem drops the final る and everything is
-// built on し (勉強した, 勉強しない, 勉強します).
-func surForms(base string) []string {
-	st := strings.TrimSuffix(base, "する")
-	if st == base {
-		return nil
-	}
-	return []string{
-		base, base + "ます", base + "ました", base + "ません", base + "ませんでした", base + "ましょう",
-		st + "しない", st + "しなかった", st + "しないです", st + "しなければ",
-		st + "して", st + "した", st + "してた", st + "したら", st + "したり",
-		st + "したい", st + "しなさい", st + "してない", st + "し", st + "しよう",
-	}
-}
-
-// godanForms expands a 五段 verb using its 未然形/連用形/終止形/音便形 stems.
-// The row is keyed by the final kana of the dictionary form.
-func godanForms(base string) []string {
-	r := []rune(base)
-	if len(r) == 0 {
-		return nil
-	}
-	last := string(r[len(r)-1])
-	st := string(r[:len(r)-1])
-	var mizen, renyou, te, ta string
-	switch last {
-	case "う":
-		mizen, renyou, te, ta = st+"わ", st+"い", st+"って", st+"った"
-	case "く":
-		mizen, renyou, te, ta = st+"か", st+"き", st+"いて", st+"いた"
-	case "ぐ":
-		mizen, renyou, te, ta = st+"が", st+"ぎ", st+"いで", st+"いだ"
-	case "す":
-		mizen, renyou, te, ta = st+"し", st+"し", st+"して", st+"した"
-	case "つ":
-		mizen, renyou, te, ta = st+"た", st+"ち", st+"って", st+"った"
-	case "ぬ":
-		mizen, renyou, te, ta = st+"な", st+"に", st+"んで", st+"んだ"
-	case "ぶ":
-		mizen, renyou, te, ta = st+"ば", st+"び", st+"んで", st+"んだ"
-	case "む":
-		mizen, renyou, te, ta = st+"ま", st+"み", st+"んで", st+"んだ"
-	case "る":
-		mizen, renyou, te, ta = st+"ら", st+"り", st+"って", st+"った"
-	default:
-		return nil
-	}
-	return []string{
-		base, base + "ます", base + "ました", base + "ません", base + "ませんでした", base + "ましょう",
-		mizen + "ない", mizen + "なかった", mizen + "ないです", mizen + "なければ", mizen + "せる",
-		renyou + "ます", renyou + "ました", renyou + "ません", renyou + "たい", renyou + "ながら", renyou + "そう",
-		te, ta, te + "いる", te + "たら", te + "たり", te + "ください", te + "ます", ta + "ら",
-	}
-}
-
-// jaBaseForm recovers a plausible dictionary form from a conjugated surface by
-// stripping the okurigana ending. It is the JP counterpart of enCandidates.
-//
-// The jaForms generator above already indexes every conjugation it can produce,
-// so this exists only for forms the generator missed (a rare okurigana shape, a
-// compound boundary, a polite auxiliary the analyzer split differently). It
-// therefore strips the longest generated-looking ending it recognises and lets
-// the caller verify the candidate against the table: it never asserts that the
-// candidate is a lemma, it only proposes one.
-func jaBaseForm(s string) (string, bool) {
-	for _, suf := range jaEndings {
-		if strings.HasSuffix(s, suf) && len(s) > len(suf) {
-			return strings.TrimSuffix(s, suf), true
-		}
-	}
-	return "", false
-}
-
-// jaEndings is ordered longest first so that "ませんでした" wins over "ません".
-var jaEndings = []string{
-	"ませんでした", "ないでした", "なかった", "ましょう", "ないです", "ましょうか",
-	"でした", "だった", "ている", "ていた", "てくる", "ていく", "ください", "させる", "られる",
-	"ません", "ない", "ます", "ました", "たい", "ながら", "そう", "たら", "たり", "て", "た",
-	"から", "ので", "のに", "ば",
-}
-
-// isKnownVerbStem reports whether s ends in a kana a Japanese verb or adjective
-// can end in. It is a character-class test, not a dictionary lookup, and it
-// never asserts a reading: SensesJP verifies the candidate against the table
-// before returning it.
-func isKnownVerbStem(s string) bool {
-	r := []rune(s)
-	if len(r) == 0 {
-		return false
-	}
-	switch r[len(r)-1] {
-	case 'る', 'う', 'く', 'ぐ', 'す', 'つ', 'ぬ', 'ぶ', 'む', 'い', 'な', 'だ', 'で', 'け', 'さ', 'し', 'こ', 'と', 'も', 'や', 'ら', 'り', 'れ', 'ろ', 'わ', 'を', 'ん':
-		return true
-	}
-	return false
-}

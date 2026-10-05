@@ -25,10 +25,23 @@ package verify
 //	implicature    what the source conveyed without saying: causation,
 //	               evidentiality, conversational implicature.
 //
-// Weights exist because the dimensions are not commensurable units of loss.
-// Total is a weighted sum used for *ordering*; it is never presented to a user
-// as "probability of being a good translation", because plan.md §41 forbids
-// collapsing a feature-wise comparison into one similarity number.
+// The dimensions are not commensurable, so a scalar summary needs weights — but
+// plan.md §43 closes with 「最終候補選択では、単一scoreではなくこのvectorを
+// 考慮する」: final selection considers the vector, not one score. The candidate
+// ordering in rank.go is therefore componentwise (see LossVector.Compare) and
+// the weights below never decide anything. They exist only so that Total is a
+// defined number where one is genuinely wanted: the Jev request context and the
+// "loss.total" trace label.
+//
+// The numbers are an ordinal encoding of the §45 dominance tiers, not
+// measurements. §45 states the ordering explicitly — semantic loss, then
+// pragmatic loss, then style loss — so the weights carry tier membership and
+// nothing finer: the four semantic components all weigh the same, and two
+// candidates differing only inside a tier get the same Total and are separated
+// by Compare.
+//
+// They are a constant, never a knob: lossWeight is a switch, so no caller can
+// retune the ranking by writing to a package-level map.
 
 import "math"
 
@@ -43,24 +56,35 @@ const (
 	DimImplicature   = "implicature"
 )
 
-// LossWeights is the documented contribution of each dimension to Total.
-// Propositional loss dominates because it changes the meaning of the sentence;
-// stylistic loss is nearly free because plan.md §42 explicitly requires that
-// natural realizations not be discarded on style alone.
-var LossWeights = map[string]float64{
-	DimPropositional: 1.00,
-	DimReferential:   0.85,
-	DimTemporal:      0.70,
-	DimPragmatic:     0.40,
-	DimStylistic:     0.20,
-	DimImplicature:   0.55,
+// LossDimensionOrder is the fixed traversal order of the loss dimensions, from
+// the dimension that changes the most to the one that changes the least.
+// Compare (plan.md §43) reads the vector in this order and every other
+// traversal uses it too, so two runs never disagree about a tie. A map has no
+// order and deterministic output is a house rule, so the order lives here and
+// nowhere else.
+//
+// The tiers are ordered apart: the four semantic dimensions come before the
+// pragmatic one, which comes before the stylistic one, because §45 lists
+// dominance in exactly that order and §42 says a realization preference is
+// never a reason to discard a translation.
+func LossDimensionOrder() []string {
+	return []string{
+		DimPropositional, DimReferential, DimTemporal,
+		DimImplicature, DimPragmatic, DimStylistic,
+	}
 }
 
-// LossDimOrder fixes the iteration order of the dimensions. Maps have no order
-// and deterministic output is a house rule, so every traversal uses this slice.
-var LossDimOrder = []string{
-	DimPropositional, DimReferential, DimTemporal,
-	DimImplicature, DimPragmatic, DimStylistic,
+// lossWeight is the constant contribution of one dimension to Total.
+func lossWeight(dim string) float64 {
+	switch dim {
+	case DimPropositional, DimReferential, DimTemporal, DimImplicature:
+		return 1.00
+	case DimPragmatic:
+		return 0.40
+	case DimStylistic:
+		return 0.20
+	}
+	return 0
 }
 
 // LossVector is the per-candidate loss profile of plan.md §43. Every component
@@ -141,25 +165,28 @@ func (l *LossVector) Add(dim string, amount float64) {
 	*l = l.With(dim, cur)
 }
 
-// Total is the weighted sum used to order candidates. It is a ranking key, not
-// a quality probability: the UI shows the six components separately so a user
-// can see that a candidate bought naturalness with a temporal loss.
+// Total is the weighted sum of the vector. It is a *summary*, not a ranking
+// key: plan.md §43 requires final selection to consider the vector, so
+// sortRanked uses Compare, and Total survives only for the trace label and the
+// context handed to the oracle. It is never a quality probability — §41
+// forbids collapsing a feature-wise comparison into one similarity number.
 func (l LossVector) Total() float64 {
-	sum := 0.0
-	for _, dim := range LossDimOrder {
-		w, ok := LossWeights[dim]
-		if !ok {
-			w = 0
-		}
+	sum, wsum := 0.0, 0.0
+	for _, dim := range LossDimensionOrder() {
+		w := lossWeight(dim)
 		sum += l.Get(dim) * w
+		wsum += w
 	}
-	return round3(sum)
+	if wsum == 0 {
+		return 0
+	}
+	return round3(sum / wsum)
 }
 
 // Max returns the largest component, ignoring zero dimensions.
 func (l LossVector) Max() float64 {
 	m := 0.0
-	for _, dim := range LossDimOrder {
+	for _, dim := range LossDimensionOrder() {
 		if v := l.Get(dim); v > m {
 			m = v
 		}
@@ -167,13 +194,33 @@ func (l LossVector) Max() float64 {
 	return round3(m)
 }
 
+// MaxOutside returns the largest component that is not DimStylistic.
+//
+// §42 requires that a realization preference — which pronoun, which word order,
+// whether a role was relabelled — never counts against a translation: it is a
+// correct realization, not a defect. GOOD/LOSSY therefore keys off this value,
+// not off a weighted total, because a scalar threshold would have to guess how
+// much style is worth and §43 says the dimensions are not commensurable.
+func (l LossVector) MaxOutside(dim string) float64 {
+	m := 0.0
+	for _, d := range LossDimensionOrder() {
+		if d == dim {
+			continue
+		}
+		if v := l.Get(d); v > m {
+			m = v
+		}
+	}
+	return m
+}
+
 // Dominant names the dimension that gave up the most, or "" when nothing was
-// lost. Ties resolve in the fixed order of LossDimOrder so the answer is stable
-// across runs; two runs of the same input must not disagree about what the
-// main problem with a candidate was.
+// lost. Ties resolve in the fixed order of LossDimensionOrder so the answer is
+// stable across runs; two runs of the same input must not disagree about what
+// the main problem with a candidate was.
 func (l LossVector) Dominant() string {
 	best, bestV := "", -1.0
-	for _, dim := range LossDimOrder {
+	for _, dim := range LossDimensionOrder() {
 		v := l.Get(dim)
 		if v > bestV+1e-9 {
 			best, bestV = dim, v
@@ -185,17 +232,34 @@ func (l LossVector) Dominant() string {
 	return best
 }
 
-// Less reports whether l is a strictly better loss profile than o, using the
-// weighted Total. Strictness comes from the epsilon so that two candidates
-// which differ by floating point noise compare equal rather than flapping.
-func (l LossVector) Less(o LossVector) bool { return l.Total() < o.Total()-1e-9 }
+// Compare orders two loss profiles componentwise, in the dimension order of
+// LossDimensionOrder, and returns -1 when l is the better profile, +1 when o
+// is, and 0 when they are indistinguishable. Lower loss is better.
+//
+// This is plan.md §43's 「単一scoreではなくこのvectorを考慮する」 made
+// executable: the most meaning-changing dimension decides, and only when it
+// ties does the next one speak. An epsilon keeps floating point noise from
+// making two equal candidates disagree, which sort.SliceStable would turn into
+// an arbitrary reordering.
+func (l LossVector) Compare(o LossVector) int {
+	for _, dim := range LossDimensionOrder() {
+		a, b := l.Get(dim), o.Get(dim)
+		switch {
+		case a < b-1e-9:
+			return -1
+		case a > b+1e-9:
+			return 1
+		}
+	}
+	return 0
+}
 
 // LessOrEqual reports l <= o componentwise, which is the relation plan.md §45
 // uses for Pareto dominance. Note that dominance is componentwise, not on
 // Total: a candidate that trades propositional loss for pragmatic gain is not
 // dominated by one that has the better total but a worse propositional score.
 func (l LossVector) LessOrEqual(o LossVector) bool {
-	for _, dim := range LossDimOrder {
+	for _, dim := range LossDimensionOrder() {
 		if l.Get(dim) > o.Get(dim)+1e-9 {
 			return false
 		}

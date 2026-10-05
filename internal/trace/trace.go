@@ -22,9 +22,12 @@ import (
 type Stage string
 
 const (
-	StageNormalize   Stage = "INPUT_NORMALIZATION"
-	StageMorph       Stage = "MORPHOLOGICAL_LATTICE"
-	StageParse       Stage = "PACKED_SYNTAX_TIC_FOREST"
+	StageNormalize Stage = "INPUT_NORMALIZATION"
+	StageMorph     Stage = "MORPHOLOGICAL_LATTICE"
+	// The wire value is part of the API contract and the WebUI matches on it.
+	// It used to read PACKED_SYNTAX_TIC_FOREST, so panels.js carried a second,
+	// correct spelling as its display label.
+	StageParse       Stage = "PACKED_SYNTACTIC_FOREST"
 	StageSemantic    Stage = "SOURCE_SEMANTIC_FOREST"
 	StageJLIR        Stage = "JLIR_CORE"
 	StageDecisions   Stage = "JEV_DECISION_GRAPH"
@@ -180,8 +183,11 @@ func (s *Span) Detail(format string, args ...any) {
 }
 
 // Count increments a named counter rendered as a badge in the UI.
+// Count records a stage counter. Zero is recorded rather than discarded: a
+// stage that produced nothing and a stage whose counter was never set are
+// different facts, and the circuit view exists to tell them apart.
 func (s *Span) Count(key string, n int) {
-	if s == nil || n == 0 {
+	if s == nil {
 		return
 	}
 	s.rec.mu.Lock()
@@ -256,14 +262,25 @@ func (s *Span) Close() {
 	}
 }
 
-// Do runs fn inside a span and closes it, converting a panic into an error
-// status so one broken stage cannot take the whole circuit down.
+// Do runs fn inside a span and closes it.
+//
+// It converts a panic into an error status so one broken stage cannot take the
+// whole circuit down. The previous version documented that behaviour and
+// contained no recover at all, so a panic in any stage unwound the request. A
+// stage that cannot complete should show as a failed stage, not as a lost
+// request.
 func (r *Recorder) Do(stage Stage, title string, fn func(*Span) error) *Span {
 	s := r.Open(stage, title)
 	defer s.Close()
 	if fn == nil {
 		return s
 	}
+	defer func() {
+		if p := recover(); p != nil {
+			s.Status(StatusError)
+			s.Note("stage panicked: %v", p)
+		}
+	}()
 	if err := fn(s); err != nil {
 		s.Status(StatusError)
 		s.Note("error: %v", err)
@@ -300,13 +317,23 @@ func (e *Event) Note(format string, args ...any) {
 
 // JevCost records oracle usage so the UI can prove the decision budget.
 type JevCost struct {
-	Calls        int     `json:"calls"`
-	Cached       int     `json:"cached"`
+	Calls  int `json:"calls"`
+	Cached int `json:"cached"`
+	// Skipped counts decisions that were never asked, and Priors counts those
+	// answered from the analysis fallback. They used to be folded into Cached,
+	// which made the UI's "how much was free" figure over-report.
+	Skipped      int     `json:"skipped"`
+	Priors       int     `json:"priors"`
 	Questions    int     `json:"questions"`
 	LatencyMS    float64 `json:"latencyMs"`
 	InputTokens  int     `json:"inputTokens"`
 	OutputTokens int     `json:"outputTokens"`
 }
+
+// jevSourcePrior mirrors jev.SourcePrior. It is duplicated rather than
+// imported so the trace package stays dependency-free: a span is recorded by
+// code that may have no oracle client at all.
+const jevSourcePrior = "prior"
 
 // DecisionView is the UI-facing shape of one oracle decision. It lives in
 // trace so that both the oracle and the renderer agree on the contract.
@@ -359,13 +386,16 @@ func (r *Recorder) Summary(decisions []DecisionView) Summary {
 			}
 		}
 		s.JevCost.Calls++
-		if d.CacheHit {
-			s.JevCost.Cached++
-		}
 		s.JevCost.Questions++
 		s.JevCost.LatencyMS += d.LatencyMS
-		if d.Skipped {
+		switch {
+		case d.Skipped:
+			s.JevCost.Skipped++
+		case d.CacheHit:
 			s.JevCost.Cached++
+		}
+		if d.Source == jevSourcePrior {
+			s.JevCost.Priors++
 		}
 	}
 	return s
@@ -428,7 +458,13 @@ func With(ctx context.Context, r *Recorder) context.Context {
 	return context.WithValue(ctx, ctxKey{}, r)
 }
 
+// From returns the ambient recorder, or nil. A nil context is legal: the
+// planner is exercised directly from tests and from the CLI without one, and
+// context.Context is an interface whose nil value panics on every method call.
 func From(ctx context.Context) *Recorder {
+	if ctx == nil {
+		return nil
+	}
 	r, _ := ctx.Value(ctxKey{}).(*Recorder)
 	return r
 }

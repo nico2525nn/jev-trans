@@ -4,7 +4,7 @@ package plan
 //
 // Generation is centred on constructions, not on words:
 //
-//	INTEND(agent, event) -> "X intends to Y" / "X means to Y" / "X plans to Y"
+//	INTEND(agent,event) -> "X intends to Y" / "X means to Y" / "X plans to Y"
 //	                    -> 「XはYするつもりだ」「XはYしようと思っている」
 //
 // Each construction carries the semantic and syntactic requirements it has,
@@ -14,14 +14,24 @@ package plan
 // *rejected* (a hard constraint of plan.md §37) and the rejection is recorded
 // so the UI can explain why a fluent-looking option never appeared.
 //
-// Pattern syntax (identical shape for both languages):
+// Pattern syntax (identical shape for both languages, opposite binding
+// direction):
 //
 //	English   uppercase = a slot, lowercase = a preposition binding the next slot
-//	Japanese  uppercase = a slot, lowercase = a connective particle binding the
-//	          next slot
+//	Japanese  uppercase = a slot, lowercase = a case particle marking the
+//	          preceding slot ("SUBJ OBJ を RECIPIENT に V")
 //
 // Slots are SUBJ (the construction's subject role), V (the predicate), OBJ (the
 // direct object) or a semantic role name from jlir.AllRoles.
+//
+// Selection is keyed by SENSE, not by family. plan.md §36 requires
+// Semantics(T) ⊇ RequiredMeaning, and two senses inside one ontology family can
+// need opposite frames: TRANSFER.01 hands a theme to a recipient while
+// TRANSFER.09 takes one from a source, so offering the RECEIVE frame for
+// TRANSFER.01 offers a sentence in which the recipient has vanished and the
+// proposition has reversed. Every construction therefore declares the senses it
+// realizes, and both selection and the event-level check consult that
+// declaration.
 
 import (
 	"sort"
@@ -37,9 +47,12 @@ type Construction struct {
 	ID string `json:"id"`
 	// Target is the language this construction produces.
 	Target lang.Lang `json:"target"`
-	// Senses lists the predicate sense ids (or families) it realizes.
+	// Senses lists the predicate sense ids this construction realizes. It is the
+	// selection key: a sense is offered only the constructions that name it, so
+	// the frame for a sense can never be one a sibling sense needs instead.
 	Senses []string `json:"senses"`
-	// Pattern is the ordered frame, e.g. "SUBJ V OBJ to RECIPIENT".
+	// Pattern is the ordered frame, e.g. "SUBJ V OBJ to RECIPIENT" or
+	// "SUBJ OBJ を RECIPIENT に V".
 	Pattern string `json:"pattern"`
 	// Register is the register the construction belongs to.
 	Register string `json:"register,omitempty"`
@@ -60,7 +73,8 @@ type Construction struct {
 	// predicate while differing in frame, register or discourse condition.
 	Family string `json:"family,omitempty"`
 	// Lex is the predicate of this construction in the target language. Empty
-	// means "look the family up in the verb lexicon".
+	// means "look the family up in the verb lexicon", or, for a chain frame,
+	// "the predicate comes from the theme's own verb".
 	Lex string `json:"lex,omitempty"`
 	// Join is the word between the verb and a clausal argument: "to" for
 	// control, "that" for a full clause complement. It is what makes
@@ -69,14 +83,11 @@ type Construction struct {
 	// Tail is a string appended after the predicate: Japanese つもりだ,
 	// わけではない, English "or something".
 	Tail string `json:"tail,omitempty"`
-	// Lex2 is the predicate of the second V slot, used by Japanese frames that
-	// put the object's case particle between two pieces of the verb, such as
-	// 〜を〜なければならない.
-	Lex2 string `json:"lex2,omitempty"`
-	// Chain selects the thematic-verb stem a Japanese predicate continues from:
-	// "nai" (negative stem), "nai_n" (negative stem + な), "masu" (連用形),
-	// "te" (て-form), "tai" or "potential". It is what turns "must eat" into
-	// 食べなければならない without a dictionary entry for the whole phrase.
+	// Chain selects how a thematic-verb frame continues the theme's verb:
+	// "nai" (negative stem), "nai_n" (negative stem + な), "te"/"ta" (て-form),
+	// "dic" (dictionary form), "tai" (連用形 + たい), "potential". It is what
+	// turns "must eat" into 食べなければならない without a dictionary entry for
+	// the whole phrase.
 	Chain string `json:"chain,omitempty"`
 	// Complement describes how a clausal argument is attached:
 	// "to"   control, the sub-clause has no subject (want to go)
@@ -86,17 +97,13 @@ type Construction struct {
 	// SubjRole overrides which role realizes as the grammatical subject, which
 	// Japanese needs for 在る ("there is") and English for a passive.
 	SubjRole string `json:"subjRole,omitempty"`
-	// Prep overrides the preposition of a role in English.
-	Prep map[string]string `json:"prep,omitempty"`
-	// Case overrides the Japanese case particle of a role.
-	Case map[string]string `json:"case,omitempty"`
-	// TopicMark pins the Japanese subject marker ("wa"/"ga"); empty leaves the
-	// decision to the projection.
-	TopicMark string `json:"topicMark,omitempty"`
 	// Polarity records the Japanese ending the construction prefers:
 	// "masu", "da" or "nominal".
 	Polarity string `json:"polarity,omitempty"`
-	// Honorific marks the honorific variant of a predicate.
+	// Honorific marks the honorific variant of a predicate. Honorificity is
+	// expressed by construction choice alone: the construction names its own
+	// honorific lexeme (お渡しする, 申す, 参见 honorific forms), because a
+	// dictionary form cannot be conjugated into one by appending ます.
 	Honorific bool `json:"honorific,omitempty"`
 }
 
@@ -151,8 +158,11 @@ type Context struct {
 	// Act is the speech act of a communication predicate ("question",
 	// "request", "statement"), used by the Requires keys.
 	Act string
-	// Oral marks a spoken (non written) source.
-	Oral bool
+	// Oral is the medium of the source as a tri-state: "1" spoken, "0"
+	// written, "" unknown. plan.md §4 forbids reading an absent value as a
+	// positive claim, so an event that carries no medium annotation is not
+	// evidence that it was spoken and earns no spoken-register preference.
+	Oral string
 	// Features carries every event feature by key, so that an ontology
 	// constraint such as ingestible=solid is visible to the Requires filter
 	// without this package needing a case per constraint.
@@ -176,6 +186,19 @@ func (c Context) Has(role string) bool {
 // IsDefinite reports whether the role's referent is discourse-established.
 func (c Context) IsDefinite(role string) bool { return c.Definite[role] }
 
+// oralFromMedium classifies a source medium feature. An absent feature yields
+// the empty string, meaning "unknown", not "spoken".
+func oralFromMedium(medium string) string {
+	switch {
+	case medium == "":
+		return ""
+	case strings.Contains(medium, "writ"):
+		return "0"
+	default:
+		return "1"
+	}
+}
+
 // Scored is one construction with the verdict of the hard/soft split.
 type Scored struct {
 	C *Construction
@@ -195,12 +218,14 @@ type Scored struct {
 type Library struct {
 	items []*Construction
 	byID  map[string]*Construction
-	byFam map[string][]*Construction // family|target -> constructions
+	// bySense indexes constructions by every sense they declare, so selection
+	// never has to ask which family might cover a sense.
+	bySense map[string][]*Construction // sense|target -> constructions
 }
 
 // Default returns the built-in construction library.
 func Default() *Library {
-	l := &Library{byID: map[string]*Construction{}, byFam: map[string][]*Construction{}}
+	l := &Library{byID: map[string]*Construction{}, bySense: map[string][]*Construction{}}
 	for _, c := range builtinConstructions() {
 		if c == nil || c.ID == "" {
 			continue
@@ -220,26 +245,41 @@ func (l *Library) add(c *Construction) {
 	if !strings.Contains(strings.ToUpper(c.ID), "."+strings.ToUpper(string(c.Target))+".") {
 		return
 	}
+	// A construction that names no sense is unreachable: selection is keyed by
+	// sense, so an empty declaration is a data error rather than a wildcard.
+	// Asserting it here keeps "180 constructions" from silently meaning
+	// "however many of them some sense happens to reach".
+	if len(c.Senses) == 0 {
+		return
+	}
 	l.items = append(l.items, c)
 	l.byID[c.ID] = c
-	key := c.familyKey()
-	l.byFam[key] = append(l.byFam[key], c)
-	sort.SliceStable(l.byFam[key], func(i, j int) bool { return l.byFam[key][i].ID < l.byFam[key][j].ID })
-}
-
-func (c *Construction) familyKey() string {
-	f := c.Family
-	if f == "" {
-		f = familyOf(c.Senses[0])
+	for _, s := range c.Senses {
+		key := s + "|" + string(c.Target)
+		l.bySense[key] = append(l.bySense[key], c)
 	}
-	return f + "|" + string(c.Target)
+	for key := range l.bySense {
+		l.sortBySense(key)
+	}
 }
 
-// All returns every construction in deterministic order.
-func (l *Library) All() []*Construction {
-	out := append([]*Construction(nil), l.items...)
-	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+// forSense returns the constructions that realize a sense: the ones that name
+// it exactly, plus the ones that name its whole family. The family key is what
+// makes a generic frame ("SUBJ V to LOCATION" for any motion sense) reachable
+// without every construction having to enumerate every sense of its family.
+func (l *Library) forSense(sense string, target lang.Lang) []*Construction {
+	out := l.bySense[sense+"|"+string(target)]
+	if fam := familyOf(sense); fam != sense {
+		out = append(out, l.bySense[fam+"|"+string(target)]...)
+	}
 	return out
+}
+
+// sortBySense keeps a sense's candidates in a deterministic order.
+func (l *Library) sortBySense(key string) {
+	sort.SliceStable(l.bySense[key], func(i, j int) bool {
+		return l.bySense[key][i].ID < l.bySense[key][j].ID
+	})
 }
 
 // Get looks a construction up by id.
@@ -251,30 +291,58 @@ func (l *Library) Get(id string) (*Construction, bool) {
 	return c, ok
 }
 
-// Len reports the size of the library.
-func (l *Library) Len() int { return len(l.items) }
+// realizesSense reports whether the construction claims the sense. A sense may
+// be declared exactly, or through the family it belongs to when the
+// construction covers every sense of that family.
+func (c *Construction) realizesSense(sense string) bool {
+	fam := familyOf(sense)
+	for _, s := range c.Senses {
+		if s == sense {
+			return true
+		}
+		if !strings.Contains(s, ".") && s == fam {
+			return true
+		}
+	}
+	return false
+}
+
+// familiesForSense lists the construction families that declare the sense, in
+// deterministic order. It replaces a hand-maintained family alias table: the
+// inventory itself is the authority on which frame realizes which sense, so the
+// two vocabularies cannot drift apart.
+func (l *Library) familiesForSense(sense string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, c := range l.forSense(sense, lang.EN) {
+		if seen[c.Family] {
+			continue
+		}
+		seen[c.Family] = true
+		out = append(out, c.Family)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // Select returns every construction that can realize sense in target, scored
 // against ctx. Surviving constructions come first, ordered by score; rejected
 // ones follow with Rejected set, so the caller can fill the rejection ledger
 // without knowing which rule killed what.
 func (l *Library) Select(sense string, target lang.Lang, ctx Context) []Scored {
-	fams := candidateFamilies(sense)
-	ctx.Known = len(fams) > 0
+	ctx.Known = len(l.forSense(sense, target)) > 0
 	ctx.Target = target
 	if ctx.Family == "" {
 		ctx.Family = familyOf(sense)
 	}
 	var out []Scored
 	seen := map[string]bool{}
-	for _, f := range fams {
-		for _, c := range l.byFam[f+"|"+string(target)] {
-			if seen[c.ID] {
-				continue
-			}
-			seen[c.ID] = true
-			out = append(out, l.score(c, ctx))
+	for _, c := range l.forSense(sense, target) {
+		if seen[c.ID] {
+			continue
 		}
+		seen[c.ID] = true
+		out = append(out, l.score(c, ctx))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Rejected != out[j].Rejected {
@@ -339,11 +407,14 @@ func (l *Library) score(c *Construction, ctx Context) Scored {
 		s.Score += 0.05
 		why = append(why, "matches motion direction")
 	}
-	if ctx.Oral && c.Register == RegisterCasual {
+	// An unknown medium buys nothing: the preference for a spoken or a written
+	// register is evidence-driven, and there is no evidence when the event says
+	// nothing about its medium.
+	if ctx.Oral == "1" && c.Register == RegisterCasual {
 		s.Score += 0.05
 		why = append(why, "spoken register")
 	}
-	if !ctx.Oral && c.Register == RegisterFormal {
+	if ctx.Oral == "0" && c.Register == RegisterFormal {
 		s.Score += 0.05
 		why = append(why, "written register")
 	}
@@ -401,10 +472,7 @@ func ctxFeature(ctx Context, key string) (string, bool) {
 	case "direction":
 		return ctx.Direction, ctx.Direction != ""
 	case "oral":
-		if ctx.Oral {
-			return "1", true
-		}
-		return "0", true
+		return ctx.Oral, ctx.Oral != ""
 	case "recipient_defined":
 		if ctx.IsDefinite(jlir.RoleRecipient) {
 			return "1", true
@@ -423,173 +491,6 @@ func ctxFeature(ctx Context, key string) (string, bool) {
 		return v, true
 	}
 	return "", false
-}
-
-// --- family resolution ----------------------------------------------------
-
-// familyAliases maps an ontology family onto the construction families that
-// can realize it. The ontology agent names senses; this table keeps the two
-// vocabularies from drifting.
-var familyAliases = map[string][]string{
-	"GIVE":     {"GIVE"},
-	"GIVING":   {"GIVE"},
-	"HANDOFF":  {"GIVE"},
-	"DELIVER":  {"GIVE"},
-	"TRANSFER": {"GIVE", "RECEIVE"},
-	"RECEIVE":  {"RECEIVE"},
-	// PERCEIVE is the ontology family for seeing, watching and noticing; the
-	// construction library files those under SEE. Without this alias a vision
-	// predicate falls through to the generic frame and loses its verb entirely.
-	"PERCEIVE":      {"SEE", "HEAR"},
-	"VISION":        {"SEE"},
-	"AUDITION":      {"HEAR"},
-	"GET":           {"RECEIVE", "TAKE"},
-	"TAKE":          {"TAKE"},
-	"ACQUIRE":       {"TAKE"},
-	"COMMUNICATION": {"SAY", "TELL", "ASK", "ANSWER", "SPEAK"},
-	"COMMUNICATE":   {"SAY", "TELL", "ASK", "ANSWER", "SPEAK"},
-	"SAY":           {"SAY"},
-	"STATE":         {"SAY"},
-	"TELL":          {"TELL"},
-	"ASK":           {"ASK"},
-	"ANSWER":        {"ANSWER"},
-	"SPEAK":         {"SPEAK"},
-	"TALK":          {"SPEAK", "SAY"},
-	"MOTION":        {"MOVE", "ARRIVE", "LEAVE"},
-	"MOVE":          {"MOVE"},
-	"GO":            {"MOVE", "ARRIVE"},
-	"TRAVEL":        {"MOVE"},
-	"APPROACH":      {"MOVE"},
-	"ARRIVE":        {"ARRIVE"},
-	"LEAVE":         {"LEAVE"},
-	"DEPART":        {"LEAVE"},
-	"MEET":          {"MEET"},
-	"VISIT":         {"MEET"},
-	"CONTACT":       {"MEET"},
-	"WANT":          {"WANT"},
-	"DESIRE":        {"WANT"},
-	"INTEND":        {"INTEND"},
-	"PLAN":          {"INTEND"},
-	"DECIDE":        {"INTEND"},
-	"CHOOSE":        {"INTEND"},
-	"HOPE":          {"INTEND"},
-	"BE":            {"BE", "NAMED", "EXIST", "COPULA"},
-	"BECOME":        {"BECOME"},
-	"EXIST":         {"EXIST"},
-	"NAMED":         {"NAMED"},
-	"IDENTITY":      {"NAMED", "BE"},
-	"CALLED":        {"NAMED"},
-	"HAVE":          {"HAVE"},
-	"POSSESS":       {"HAVE"},
-	"OWN":           {"HAVE"},
-	"CAN":           {"ABLE"},
-	"ABLE":          {"ABLE"},
-	"OBLIG":         {"MUST"},
-	"OBLIGATION":    {"MUST"},
-	"MUST":          {"MUST"},
-	"REQUIREMENT":   {"MUST"},
-	"SHOULD":        {"SHOULD"},
-	"PERMISSION":    {"MAY"},
-	"ALLOW":         {"MAY"},
-	"PERMIT":        {"MAY"},
-	"EAT":           {"EAT"},
-	"DRINK":         {"DRINK"},
-	"CONSUME":       {"EAT", "DRINK"},
-	"MEAL":          {"EAT"},
-	"PERCEPTION":    {"SEE", "HEAR"},
-	"SEE":           {"SEE"},
-	"LOOK":          {"SEE"},
-	"WATCH":         {"SEE"},
-	"OBSERVE":       {"SEE"},
-	"HEAR":          {"HEAR"},
-	"LISTEN":        {"HEAR"},
-	"KNOW":          {"KNOW"},
-	"THINK":         {"THINK"},
-	"BELIEVE":       {"BELIEVE"},
-	"GUESS":         {"THINK"},
-	"UNDERSTAND":    {"KNOW"},
-	"CONSIDER":      {"THINK"},
-	"MENTAL":        {"KNOW", "THINK", "BELIEVE", "WANT"},
-	"COMPARE":       {"COMPARE"},
-	"COMPARISON":    {"COMPARE"},
-	"COPULA":        {"COPULA"},
-	"LIKE":          {"LIKE"},
-	"LOVE":          {"LIKE"},
-	"SHOW":          {"SHOW"},
-	"READ":          {"READ"},
-	"WRITE":         {"WRITE"},
-	"SLEEP":         {"SLEEP"},
-	"LIVE":          {"LIVE"},
-	"WORK":          {"WORK"},
-	"OPEN":          {"OPEN"},
-	"CLOSE":         {"CLOSE"},
-	"BEGIN":         {"START"},
-	"START":         {"START"},
-	"STOP":          {"STOP"},
-	"SEND":          {"SEND"},
-	"BUY":           {"BUY"},
-	"SELL":          {"BUY"},
-	"RUN":           {"MOVE"},
-	"WALK":          {"MOVE"},
-	"TIME":          {"BE"},
-}
-
-// familyStems is the substring fallback used when an ontology family is not in
-// familyAliases, keyed by a stem that is at least three characters long so that
-// "BE" cannot swallow "BELIEVE".
-var familyStems = map[string][]string{
-	"GIV": {"GIVE"}, "TRANS": {"GIVE", "RECEIVE"}, "RECEIV": {"RECEIVE"},
-	"HAND": {"GIVE"}, "DELIV": {"GIVE"},
-	"SAY": {"SAY"}, "STAT": {"SAY"}, "TELL": {"TELL"}, "ASK": {"ASK"},
-	"ANSW": {"ANSWER"}, "SPEAK": {"SPEAK"}, "TALK": {"SPEAK", "SAY"},
-	"COMMUNIC": {"SAY", "TELL", "ASK", "ANSWER", "SPEAK"},
-	"MOVE":     {"MOVE"}, "GO": {"MOVE", "ARRIVE"}, "TRAV": {"MOVE"},
-	"APPROACH": {"MOVE"}, "ARRIV": {"ARRIVE"}, "LEAV": {"LEAVE"}, "DEPART": {"LEAVE"},
-	"MEET": {"MEET"}, "VISIT": {"MEET"}, "CONTACT": {"MEET"},
-	"WANT": {"WANT"}, "DESIR": {"WANT"}, "INTEND": {"INTEND"}, "PLAN": {"INTEND"},
-	"DECID": {"INTEND"}, "CHOOS": {"INTEND"}, "HOPE": {"INTEND"},
-	"BECOM": {"BECOME"}, "EXIST": {"EXIST"}, "NAM": {"NAMED"}, "CALL": {"NAMED"},
-	"HAVE": {"HAVE"}, "POSSESS": {"HAVE"}, "OWN": {"HAVE"},
-	"CAN": {"ABLE"}, "ABLE": {"ABLE"}, "OBLIG": {"MUST"}, "MUST": {"MUST"},
-	"REQUIRE": {"MUST"}, "SHOULD": {"SHOULD"}, "PERMIS": {"MAY"}, "ALLOW": {"MAY"},
-	"EAT": {"EAT"}, "DRINK": {"DRINK"}, "CONSUM": {"EAT", "DRINK"},
-	"SEE": {"SEE"}, "LOOK": {"SEE"}, "WATCH": {"SEE"}, "OBSERV": {"SEE"},
-	"HEAR": {"HEAR"}, "LISTEN": {"HEAR"},
-	"KNOW": {"KNOW"}, "THINK": {"THINK"}, "BELIE": {"BELIEVE"}, "GUESS": {"THINK"},
-	"UNDERSTAND": {"KNOW"}, "CONSIDER": {"THINK"},
-	"COMPAR": {"COMPARE"}, "COPULA": {"COPULA"}, "COPUL": {"COPULA"},
-	"LIKE": {"LIKE"}, "LOVE": {"LIKE"}, "SHOW": {"SHOW"},
-	"READ": {"READ"}, "WRITE": {"WRITE"}, "SLEEP": {"SLEEP"}, "LIVE": {"LIVE"},
-	"WORK": {"WORK"}, "OPEN": {"OPEN"}, "CLOSE": {"CLOSE"},
-	"BEGIN": {"START"}, "START": {"START"}, "STOP": {"STOP"}, "SEND": {"SEND"},
-	"BUY": {"BUY"}, "SELL": {"BUY"},
-}
-
-// candidateFamilies resolves a sense id (or bare family) to construction
-// families, longest stem first, deterministically.
-func candidateFamilies(sense string) []string {
-	fam := familyOf(sense)
-	if fam == "" {
-		return nil
-	}
-	if v, ok := familyAliases[fam]; ok {
-		return append([]string(nil), v...)
-	}
-	best := ""
-	for stem := range familyStems {
-		if len(stem) < 3 {
-			continue
-		}
-		if strings.HasPrefix(fam, stem) || strings.HasPrefix(stem, fam) {
-			if len(stem) > len(best) {
-				best = stem
-			}
-		}
-	}
-	if best == "" {
-		return nil
-	}
-	return append([]string(nil), familyStems[best]...)
 }
 
 // --- selection ------------------------------------------------------------
@@ -627,10 +528,16 @@ func selectConstructions(r Request, p *Projection, ep *EventPlan, ev *jlir.Event
 		ep.Note("fallback frame: " + fb.Notes)
 		return
 	}
+	// A construction that lost the scoring race never became a candidate. It is
+	// a ranking fact, not a violation, so it goes to the dominance ledger and
+	// not into the rejection ledger: plan.md §37 forbids mixing the two, and
+	// the UI sorts the ledger by the HARD./SOFT. prefix.
+	var dominated []string
 	if len(live) > maxConstructions {
 		for _, s := range live[maxConstructions:] {
-			ep.Rejects(RejectInfo{Slot: string(ev.ID), Lex: s.C.ID, Rule: SoftDominance,
-				Reason: sprintf("lower ranked than the %d better constructions", maxConstructions), Stage: "construction"})
+			dominated = append(dominated, s.C.ID)
+			ep.Note("dominated construction " + s.C.ID + ": lower ranked than the " +
+				sprintf("%d", maxConstructions) + " better constructions")
 		}
 		live = live[:maxConstructions]
 	}
@@ -662,7 +569,7 @@ func selectConstructions(r Request, p *Projection, ep *EventPlan, ev *jlir.Event
 		}
 	}
 	ep.Note("construction " + chosen)
-	traceSelection(r.recorder(), ev.ID, chosen, live)
+	traceSelection(r.recorder(), ev.ID, chosen, live, dominated)
 }
 
 // constructionContext builds the selection context from the event and the
@@ -684,7 +591,7 @@ func constructionContext(r Request, p *Projection, ep *EventPlan, ev *jlir.Event
 		Politeness: r.Style.Normalized().Politeness,
 		Honorific:  p != nil && p.Honorific,
 		Direction:  strings.ToLower(evFeature(ev, "direction")),
-		Oral:       !strings.Contains(evFeature(ev, "medium"), "writ"),
+		Oral:       oralFromMedium(evFeature(ev, "medium")),
 		Args:       ev.OrderArgs(),
 	}
 	if f := evFeature(ev, "speech_act"); f != "" {
@@ -712,23 +619,30 @@ func constructionContext(r Request, p *Projection, ep *EventPlan, ev *jlir.Event
 }
 
 // fallbackConstruction is the frame used for a sense the library does not know.
-// It asserts nothing: the verb slot carries the sense name so the gap is
-// visible in the candidate instead of being papered over with a guess.
+//
+// It deliberately supplies NO verb lexeme. Filling the slot with the sense
+// name lower-cased -- which is what this used to do -- makes the morphology
+// layer conjugate "unknown" into "unknowns." / "unknowned."; the re-parser then
+// reads that non-word back as the same UNKNOWN.VERB with an empty argument set,
+// the verifier compares two empty role maps and reports EXACT with full
+// confidence. A fabricated sentence that passes the safety net is the one
+// failure plan.md §22 exists to prevent.
+//
+// A predicate with no registered lexeme therefore yields no candidate at all.
+// Realize rejects it and the pipeline reports UNPARSABLE, which is true.
 func fallbackConstruction(target lang.Lang, ctx Context) *Construction {
-	c := &Construction{
+	return &Construction{
 		ID:          "C.FALLBACK." + strings.ToUpper(string(target)) + ".01",
 		Target:      target,
 		Senses:      []string{ctx.Sense},
 		Pattern:     "SUBJ V OBJ",
 		Family:      "UNKNOWN",
 		Register:    RegisterNeutral,
-		Naturalness: 0.1,
-		Notes:       "generic frame for an unregistered sense; the predicate slot carries the sense name",
+		Naturalness: 0,
+		Notes: "generic frame for an unregistered sense; it carries no verb lexeme, so the " +
+			"predicate cannot be realized and the sentence is reported UNPARSABLE rather " +
+			"than filled with a placeholder word",
 	}
-	if target == lang.EN {
-		c.Lex = strings.ToLower(ctx.Family)
-	}
-	return c
 }
 
 // targetLabel names a language for question text.
@@ -740,8 +654,10 @@ func targetLabel(l lang.Lang) string {
 }
 
 // traceSelection writes a construction selection span. Kept here so both
-// projections record the same artifact shape.
-func traceSelection(rec *trace.Recorder, evID jlir.ID, chosen string, live []Scored) {
+// projections record the same artifact shape. dominated is reported in its own
+// field so a frame that lost a scoring race is never read as a frame that was
+// illegal (plan.md §37).
+func traceSelection(rec *trace.Recorder, evID jlir.ID, chosen string, live []Scored, dominated []string) {
 	if rec == nil {
 		return
 	}
@@ -751,5 +667,9 @@ func traceSelection(rec *trace.Recorder, evID jlir.ID, chosen string, live []Sco
 	for _, s := range live {
 		rows = append(rows, map[string]any{"id": s.C.ID, "score": s.Score, "why": s.Why, "pattern": s.C.Pattern})
 	}
-	span.Data(map[string]any{"event": string(evID), "chosen": chosen, "scored": rows})
+	data := map[string]any{"event": string(evID), "chosen": chosen, "scored": rows}
+	if len(dominated) > 0 {
+		data["dominated"] = dominated
+	}
+	span.Data(data)
 }

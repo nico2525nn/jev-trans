@@ -588,6 +588,10 @@ var enCopularBases = map[string]string{
 
 func init() {
 	buildLex()
+	// The open-class nouns and adjectives are registered after the closed
+	// class so that a form registered in both keeps the closed-class reading,
+	// which is the more reliable of the two.
+	buildOpenClass()
 	buildVerbs()
 	buildContractions()
 	enDictSize = len(enLex) + len(enIrregularVerbs)*4

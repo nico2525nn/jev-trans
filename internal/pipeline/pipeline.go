@@ -293,39 +293,59 @@ func (e *Engine) Translate(ctx context.Context, req Request) (*Response, error) 
 	})
 
 	// ---- 13-15. TARGET RE-PARSER / TARGET JLIR / VERIFIER ------------------
-	candidates, vCands := e.verifyCandidates(ctx, rec, req, srcGraph, raw, &warnings)
+	candidates, vCands, targetGraph := e.verifyCandidates(ctx, rec, req, srcGraph, raw, &warnings)
+	resp.JLIR.Target = targetGraph
 
-	// ---- 16. JEV RERANKER (Pareto + D9) -----------------------------------
-	if len(candidates) > 1 {
-		rankCtx := trace.With(ctx, rec)
-		outcome, err := verify.RankWith(rankCtx, rec, vCands, e.naturalness)
-		rec.Do(trace.StageRerank, "jev reranker", func(s *trace.Span) error {
-			s.Count("input candidates", len(vCands))
-			if outcome != nil {
-				s.Count("surviving", len(outcome.Ranked))
-				s.Count("pareto pruned", len(outcome.Pruned))
-				s.Count("dominance edges", len(outcome.Drops))
-				s.Data(outcome)
-				for _, d := range outcome.Drops {
-					s.Note("dominated: %s", d)
-				}
-				for _, p := range outcome.Pruned {
-					s.Note("hard gate rejected %q: %s", p.Text, strings.Join(p.Rejected, "; "))
-				}
-				if outcome.Applied {
-					s.Label("rerank", "jev")
-				} else {
-					s.Status(trace.StatusWarn)
-					s.Note("no oracle rerank applied; ordering is by verifier loss and construction prior")
-				}
-			}
-			if err != nil {
-				s.Note("rerank hook failed: %v", err)
-			}
+	// ---- 16. JEV RERANKER: hard gate, Pareto dominance, D9 ----------------
+	//
+	// RankWith runs unconditionally. It is the only place the plan.md §44 hard
+	// gate is enforced, and guarding the call on len(candidates) > 1 meant that
+	// when the hard constraints pruned the forest to a single derivation --
+	// precisely the case where the gate matters most -- the candidate reached
+	// FINAL OUTPUT with whatever status the verifier gave it, including
+	// UNSUPPORTED. A single candidate that fails the gate must still fail.
+	//
+	// RankWith is given a nil recorder so that it does not open a second span
+	// for the same stage; this block owns the stage.
+	rankCtx := trace.With(ctx, rec)
+	outcome, rankErr := verify.RankWith(rankCtx, nil, vCands, e.naturalness)
+	rec.Do(trace.StageRerank, "hard gate, dominance and jev rerank", func(s *trace.Span) error {
+		s.Count("input candidates", len(vCands))
+		if outcome == nil {
+			s.Status(trace.StatusWarn)
+			s.Note("ranking produced no outcome; every candidate is reported unverified")
 			return nil
-		})
-		if outcome != nil {
-			candidates = fromVerifyCandidates(outcome.Ranked)
+		}
+		s.Count("surviving", len(outcome.Ranked))
+		s.Count("hard gate rejected", len(outcome.Pruned))
+		s.Count("dominance edges", len(outcome.Drops))
+		s.Data(outcome)
+		for _, d := range outcome.Drops {
+			s.Note("dominated: %s", d)
+		}
+		for _, p := range outcome.Pruned {
+			s.Note("hard gate rejected %q: %s", p.Text, strings.Join(p.Rejected, "; "))
+		}
+		if len(outcome.Pruned) > 0 {
+			s.Status(trace.StatusError)
+		}
+		if outcome.Applied {
+			s.Label("rerank", "jev")
+		} else {
+			s.Note("no oracle rerank applied; ordering is by verifier loss and construction prior")
+		}
+		if rankErr != nil {
+			s.Note("rerank hook failed: %v", rankErr)
+		}
+		return nil
+	})
+	if rankErr != nil {
+		warnings = append(warnings, "rerank hook failed: "+rankErr.Error())
+	}
+	candidates = fromVerifyCandidates(outcomeRanked(outcome))
+	for _, c := range candidates {
+		if c.RejectedBy == nil {
+			c.RejectedBy = nil
 		}
 	}
 
@@ -426,10 +446,11 @@ func (e *Engine) planRequest(ctx context.Context, req Request, g *jlir.Graph, de
 			if prior.Winner != "" {
 				return prior.Winner, prior.P(prior.Winner), "prior"
 			}
-			if len(options) > 0 {
-				return options[0], 0, "default"
-			}
-			return "", 0, "none"
+			// No evidence: return nothing. Returning options[0] commits the
+			// first enumerated candidate for a slot we know nothing about, which
+			// is the invented answer plan.md §4 rules out. An empty resolution
+			// makes the planner record a gap instead.
+			return "", 0, "unresolved"
 		},
 	}
 }
@@ -506,7 +527,7 @@ func (e *Engine) naturalness(ctx context.Context, cands []verify.Candidate) ([]f
 // loop plan.md §40 calls the core safety device: nothing reaches the user
 // without having been parsed again and compared feature by feature.
 func (e *Engine) verifyCandidates(ctx context.Context, rec *trace.Recorder, req Request,
-	src *jlir.Graph, raw []forest.Candidate, warnings *[]string) ([]Candidate, []verify.Candidate) {
+	src *jlir.Graph, raw []forest.Candidate, warnings *[]string) ([]Candidate, []verify.Candidate, *jlir.Graph) {
 
 	out := make([]Candidate, 0, len(raw))
 	vCands := make([]verify.Candidate, 0, len(raw))
@@ -515,19 +536,29 @@ func (e *Engine) verifyCandidates(ctx context.Context, rec *trace.Recorder, req 
 		s.Status(trace.StatusSkip)
 		s.Note("no candidates reached the verifier")
 		s.Close()
-		return out, vCands
+		return out, vCands, nil
 	}
 
-	var texts []string
-	var regraphs []*jlir.Graph
+	// kept pairs each re-parse with the candidate it came from. Building a
+	// parallel texts/regraphs slice and indexing raw by position attached the
+	// right sentence to the wrong candidate's constructions, provenance trace
+	// and naturalness score whenever a blank candidate was skipped.
+	type keptCand struct {
+		cand  forest.Candidate
+		graph *jlir.Graph
+	}
+	var kept []keptCand
+	texts := make([]string, 0, len(raw))
 
 	rep := rec.Open(trace.StageReparse, "target re-parser")
+	blank := 0
 	for _, c := range raw {
 		if strings.TrimSpace(c.Text) == "" {
+			blank++
 			continue
 		}
 		tgt := verify.Reparse(c.Text, req.TargetLang)
-		regraphs = append(regraphs, tgt)
+		kept = append(kept, keptCand{cand: c, graph: tgt})
 		texts = append(texts, c.Text)
 		if tgt == nil {
 			rep.Note("could not re-parse %q; the target sentence is not well formed", c.Text)
@@ -535,22 +566,36 @@ func (e *Engine) verifyCandidates(ctx context.Context, rec *trace.Recorder, req 
 			*warnings = append(*warnings, fmt.Sprintf("candidate %q could not be re-parsed", c.Text))
 		}
 	}
-	rep.Count("candidates", len(texts))
+	rep.Count("candidates", len(kept))
+	if blank > 0 {
+		rep.Note("skipped %d blank candidate(s)", blank)
+	}
 	rep.Data(texts)
 	rep.Close()
 
 	tj := rec.Open(trace.StageTargetJLIR, "target jlir")
-	tj.Count("graphs", len(regraphs))
-	tj.Data(regraphs)
+	tj.Count("graphs", len(kept))
+	graphs := make([]*jlir.Graph, 0, len(kept))
+	for _, k := range kept {
+		graphs = append(graphs, k.graph)
+	}
+	tj.Data(graphs)
 	tj.Close()
 
 	ver := rec.Open(trace.StageVerify, "semantic equivalence verifier")
 	ver.Detail("comparing source and target feature by feature")
 	ver.Label("method", "feature diff, no embedding similarity")
-	for i, text := range texts {
-		cand := Candidate{Text: text, Trace: raw[i].Trace, Constructions: raw[i].Constructions}
-		cand.Naturalness = raw[i].Probability
-		if regraphs[i] == nil {
+	var targetGraph *jlir.Graph
+	for _, k := range kept {
+		text := k.cand.Text
+		cand := Candidate{Text: text, Trace: k.cand.Trace, Constructions: k.cand.Constructions}
+		cand.Naturalness = k.cand.Probability
+		if k.graph != nil && targetGraph == nil {
+			// The API contract exposes jlir.target; it was declared and never
+			// assigned, so the UI's target-graph tab always reported it absent.
+			targetGraph = k.graph
+		}
+		if k.graph == nil {
 			res := &verify.Result{Status: string(StatusUnparsable), Notes: []string{
 				"target sentence could not be re-parsed"}}
 			cand.Status = StatusUnparsable
@@ -564,16 +609,13 @@ func (e *Engine) verifyCandidates(ctx context.Context, rec *trace.Recorder, req 
 			})
 			continue
 		}
-		res := verify.Verify(src, regraphs[i], req.SourceLang, req.TargetLang)
+		res := verify.Verify(src, k.graph, req.SourceLang, req.TargetLang)
 		cand.Loss = res.Loss
 		cand.Unsupported = res.Unsupported
 		cand.Diffs = res.Diffs
 		cand.Notes = append(cand.Notes, res.Notes...)
 		cand.Confidence = Confidence{Overall: res.Confidence["overall"], ByFeature: res.Confidence}
 		cand.Status = Status(res.Status)
-		if cand.Confidence.Overall == 0 {
-			cand.Confidence.Overall = confidenceOf(cand.Loss)
-		}
 		for _, d := range res.Diffs {
 			if d.Severity == "hard" {
 				ver.Note("%q rejected: %s %s", text, d.Item, d.Detail)
@@ -596,7 +638,16 @@ func (e *Engine) verifyCandidates(ctx context.Context, rec *trace.Recorder, req 
 	ver.Data(out)
 	ver.Close()
 	_ = ctx
-	return out, vCands
+	return out, vCands, targetGraph
+}
+
+// outcomeRanked extracts the surviving candidates from a ranking outcome,
+// tolerating a nil outcome so a failed rerank degrades rather than panics.
+func outcomeRanked(outcome *verify.RankOutcome) []verify.Candidate {
+	if outcome == nil {
+		return nil
+	}
+	return outcome.Ranked
 }
 
 func fromVerifyCandidates(in []verify.Candidate) []Candidate {
@@ -613,9 +664,6 @@ func fromVerifyCandidates(in []verify.Candidate) []Candidate {
 			cand.Notes = append(cand.Notes, c.Verify.Notes...)
 			cand.Confidence = Confidence{Overall: c.Verify.Confidence["overall"], ByFeature: c.Verify.Confidence}
 			cand.Status = Status(c.Verify.Status)
-		}
-		if cand.Confidence.Overall == 0 {
-			cand.Confidence.Overall = confidenceOf(cand.Loss)
 		}
 		out = append(out, cand)
 	}
@@ -636,14 +684,6 @@ func aggregateStatus(cands []Candidate) Status {
 		}
 	}
 	return best
-}
-
-func confidenceOf(l verify.LossVector) float64 {
-	c := 1 - l.Total()
-	if c < 0 {
-		return 0
-	}
-	return c
 }
 
 // questions emits an interactive question only when the ambiguity genuinely
@@ -754,7 +794,7 @@ func applyUserAnswer(s *trace.Span, g *jlir.Graph, a *Answer) {
 			ent.Referent.Prob = map[string]float64{a.Option: 1}
 			ent.Referent.Winner = a.Option
 			ent.Referent.Resolved = true
-			ent.Referent.Provenance = "user"
+			ent.Referent.Provenance = jev.SourceUser
 			ent.SetFeature(jlir.Feature{
 				Key: "referent", Value: a.Option, Confidence: 1,
 				Prov: []jlir.Provenance{jlir.PredDecision(a.QuestionID, 1, "user disambiguation")},

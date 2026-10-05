@@ -12,7 +12,8 @@ package plan
 // Hard constraints reject a branch and are recorded in the ledger with the
 // rule that killed it. Soft constraints only rank. The two are never mixed:
 // a fluent sentence with the wrong predicate must not outrank an awkward one
-// with the right one.
+// with the right one, and a frame that merely lost a scoring race is not a
+// violation and is never filed in the rejection ledger.
 
 import (
 	"sort"
@@ -27,6 +28,12 @@ import (
 // Hard constraint rule names. They are stable strings: the UI shows them, the
 // tests assert them, and the rejection ledger is the only place a branch that
 // "could have existed" is allowed to be mentioned.
+//
+// Every rule here is a HARD rule, i.e. a violation of
+// Semantics(T) ⊇ RequiredMeaning. Ranking facts (SoftDominance) are not in this
+// ledger; they are carried as notes and as a separate "dominated" list on the
+// construction-selection trace span, so "this frame was illegal" and "this
+// frame lost a scoring race" can never be read as the same thing.
 const (
 	HardInventedGender  = "HARD.invented_gender"
 	HardUnsupportedInfo = "HARD.unsupported_info"
@@ -44,13 +51,23 @@ const (
 	HardUnknownSense    = "HARD.unknown_predicate"
 	HardConstRequires   = "HARD.construction.requires"
 	HardConstForbidden  = "HARD.construction.forbidden"
-	// SoftDominance marks a candidate pruned by Pareto dominance, which is a
-	// ranking fact rather than a violation.
-	SoftDominance = "SOFT.dominated"
+	// HardRoleUnrealizable rejects a frame that has no slot for a role the
+	// event fills. Offering such a frame is what let 「太郎が花子に本を渡した」
+	// be realized as 「太郎は本を受け取った」: the recipient had nowhere to go,
+	// so it was dropped and the proposition reversed (plan.md §36).
+	HardRoleUnrealizable = "HARD.construction.role_unrealizable"
+
+	// HardRulePrefix is the namespace every violation rule shares. The
+	// rejection ledger is sorted and displayed by prefix, so a rule outside this
+	// namespace does not belong in it.
+	HardRulePrefix = "HARD."
 )
 
-// LossVector is the translation loss vector of plan.md §43. The planner fills
-// the projection half of it; the verifier owns the rest.
+// LossVector is the planner's half of the translation loss vector of plan.md
+// §43; the verifier owns the rest and has its own, authoritative type
+// (verify.LossVector). This one aggregates the projection's LossHints so the
+// pipeline can report how much the target projection gave up before the
+// verifier ever runs.
 type LossVector struct {
 	Propositional float64 `json:"propositional"`
 	Referential   float64 `json:"referential"`
@@ -58,105 +75,6 @@ type LossVector struct {
 	Pragmatic     float64 `json:"pragmatic"`
 	Stylistic     float64 `json:"stylistic"`
 	Implicature   float64 `json:"implicature"`
-}
-
-// Add returns the component-wise sum.
-func (l LossVector) Add(o LossVector) LossVector {
-	return LossVector{
-		Propositional: l.Propositional + o.Propositional,
-		Referential:   l.Referential + o.Referential,
-		Temporal:      l.Temporal + o.Temporal,
-		Pragmatic:     l.Pragmatic + o.Pragmatic,
-		Stylistic:     l.Stylistic + o.Stylistic,
-		Implicature:   l.Implicature + o.Implicature,
-	}
-}
-
-// Dominates implements the dominance relation of plan.md §45: a is at least as
-// good as b on every loss dimension and strictly better on at least one, or at
-// least as natural.
-func (l LossVector) Dominates(o LossVector) bool {
-	better := l.Propositional <= o.Propositional && l.Referential <= o.Referential &&
-		l.Temporal <= o.Temporal && l.Pragmatic <= o.Pragmatic &&
-		l.Stylistic <= o.Stylistic && l.Implicature <= o.Implicature
-	if !better {
-		return false
-	}
-	equal := l.Propositional == o.Propositional && l.Referential == o.Referential &&
-		l.Temporal == o.Temporal && l.Pragmatic == o.Pragmatic &&
-		l.Stylistic == o.Stylistic && l.Implicature == o.Implicature
-	return !equal
-}
-
-// Total is the unweighted sum, used only for ordering, never for acceptance.
-func (l LossVector) Total() float64 {
-	return l.Propositional + l.Referential + l.Temporal + l.Pragmatic + l.Stylistic + l.Implicature
-}
-
-// PruneDominated removes candidates that Pareto-dominance makes redundant.
-// lossOf and naturalnessOf let the caller supply the objective; the forest's
-// own probability is the default naturalness estimate. It is exported because
-// the reranker (plan.md §44) runs the same reduction over a wider candidate
-// set than the forest holds.
-func PruneDominated(cands []forest.Candidate, lossOf func(forest.Candidate) LossVector, keep int) []forest.Candidate {
-	n := len(cands)
-	if n < 2 {
-		return cands
-	}
-	losses := make([]LossVector, n)
-	nat := make([]float64, n)
-	for i, c := range cands {
-		if lossOf != nil {
-			losses[i] = lossOf(c)
-		}
-		nat[i] = c.Probability
-	}
-	drop := make([]bool, n)
-	for i := range cands {
-		for j := range cands {
-			if i == j || drop[i] {
-				continue
-			}
-			if losses[j].Dominates(losses[i]) && nat[j] >= nat[i] {
-				drop[i] = true
-				break
-			}
-			if !losses[j].Dominates(losses[i]) && nat[j] > nat[i] &&
-				losses[i].Dominates(losses[j]) {
-				// Equal loss, lower naturalness: dominated by probability alone.
-				drop[i] = true
-				break
-			}
-		}
-	}
-	out := make([]forest.Candidate, 0, n)
-	for i, c := range cands {
-		if drop[i] {
-			continue
-		}
-		out = append(out, c)
-	}
-	if keep > 0 && len(out) > keep {
-		out = out[:keep]
-	}
-	return out
-}
-
-// ConstructionIDs splits the packed path a candidate carries into its node
-// labels. forest.Enumerate collapses a derivation into its deepest node, so the
-// construction id is the last segment of Candidate.Constructions[0]; this
-// helper hands the consumer the segments instead of the path.
-func ConstructionIDs(c forest.Candidate) []string {
-	var out []string
-	for _, entry := range c.Constructions {
-		for _, seg := range strings.Split(entry, "/") {
-			if seg == "" || seg == "S" {
-				continue
-			}
-			out = append(out, seg)
-		}
-	}
-	return out
 }
 
 // piece is one materialized element of a clause: a slot with its surviving
@@ -172,15 +90,21 @@ type piece struct {
 	label string
 	alts  []forest.Alt
 	// clause is set when the piece realizes an embedded event instead of a
-	// lexeme. The chain builder hands the clause the material that follows it,
-	// because a subtree cannot be concatenated with material after it: the
-	// clause is built with its own continuation inside.
+	// lexeme. The chain builder hands the clause the material that follows
+	// it, because a subtree cannot be concatenated with material after it:
+	// the clause is built with its own continuation inside.
 	clause *NPPlan
 	// noSubject suppresses the subject of an embedded clause, which is how a
 	// control complement (want to go) drops it.
 	noSubject bool
 	// depth is the embedding depth of the clause.
 	depth int
+	// sealed marks a piece that already carries its own complete subtree, so
+	// the chain builder must not attach the following material to it. A quoted
+	// Japanese clause is one: the reporting verb belongs inside it, because the
+	// packed forest concatenates a lexeme BEFORE its child and 「〜と思う」 puts
+	// the verb after the clause.
+	sealed bool
 }
 
 // empty reports whether the piece carries no material at all.
@@ -202,11 +126,14 @@ type realizer struct {
 	// which is how a control complement (want to go) drops its subject.
 	noSubject bool
 	// clauseFinal marks the clause being built as the last one of the
-	// sentence, which is where the sentence punctuation goes.
+	// sentence, which is where the sentence-final particle goes.
 	clauseFinal bool
 	// bareVerb suppresses subject-verb agreement inside a control complement:
 	// "wants to go", not "wants to goes".
 	bareVerb bool
+	// embedded marks the clause being built as a clausal argument of another
+	// event, so it carries no sentence punctuation of its own.
+	embedded bool
 }
 
 // Realize builds the packed realization forest for a projection.
@@ -250,7 +177,7 @@ func Realize(r Request, p *Projection) *forest.Realization {
 	// clause is a single interned subtree whose alternatives are its
 	// constructions and whose inside is shared with every other candidate.
 	punct := rt.punctuation(p)
-	punctNode := rt.terminal("PUNCT", punct, 1, "", true)
+	punctNode := rt.terminal("PUNCT", punct)
 	node := punctNode
 	events := p.Events
 	embedded := embeddedEvents(r.JLIR)
@@ -270,6 +197,20 @@ func Realize(r Request, p *Projection) *forest.Realization {
 		label := "C" + string(ep.EventID)
 		rt.clauseFinal = pos == len(matrix)-1
 		frames := rt.frames(ep, i == 0, 0)
+		// The sentence's punctuation is decided here and nowhere else, and it is
+		// decided from what actually realized rather than from the clause's
+		// position. The assembly runs right to left, so `node` still being the
+		// bare punctuation node means nothing to the right materialized: this
+		// clause is therefore the sentence's last real one and must not close
+		// itself. Deciding this by position, as the per-language frame builders
+		// used to, made a final clause that yielded no frame leave the previous
+		// clause's 。 in place of the sentence's own: 「あります。。」.
+		if node != punctNode && !rt.embedded {
+			for k := range frames {
+				frames[k].parts = append(frames[k].parts, piece{label: "PUNCT",
+					alts: []forest.Alt{{Lex: punct, Probability: 0.9, Hard: true}}})
+			}
+		}
 		var alts []forest.Alt
 		for _, f := range frames {
 			sub := rt.chain(f.parts, node)
@@ -374,8 +315,12 @@ func (rt *realizer) clauseTail(ep *EventPlan, tail string, noSubject bool, depth
 	if ep == nil {
 		return ""
 	}
-	saved, savedBare := rt.noSubject, rt.bareVerb
+	saved, savedBare, savedFinal, savedEmbedded := rt.noSubject, rt.bareVerb, rt.clauseFinal, rt.embedded
 	rt.noSubject, rt.bareVerb = noSubject, noSubject
+	// An embedded clause is not a sentence: it never owns the sentence-final
+	// particle and never closes itself with a full stop. Without this the
+	// sub-clause emitted its own 。 and the outer sentence emitted another.
+	rt.clauseFinal, rt.embedded = true, true
 	frames := rt.frames(ep, false, depth)
 	var alts []forest.Alt
 	for _, f := range frames {
@@ -388,6 +333,7 @@ func (rt *realizer) clauseTail(ep *EventPlan, tail string, noSubject bool, depth
 			Rule: "<" + f.c.ID + ">", Hard: true})
 	}
 	rt.noSubject, rt.bareVerb = saved, savedBare
+	rt.clauseFinal, rt.embedded = savedFinal, savedEmbedded
 	if len(alts) == 0 {
 		return ""
 	}
@@ -449,18 +395,20 @@ func (rt *realizer) constructionsOf(ep *EventPlan) []*Construction {
 
 // checkConstruction applies the event level hard constraints to a construction.
 func (rt *realizer) checkConstruction(ep *EventPlan, c *Construction) (ok bool, rule, reason string) {
-	fams := candidateFamilies(ep.SenseID)
-	if c.Family != "UNKNOWN" && len(fams) > 0 {
-		ok = false
-		for _, f := range fams {
-			if f == c.Family {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return false, HardWrongPredicate, "construction " + c.ID + " realizes " + c.Family + ", not " + ep.SenseFamily
-		}
+	// The construction must declare the sense. plan.md §36 requires
+	// Semantics(T) ⊇ RequiredMeaning, and TRANSFER.01 (a hand-over) and
+	// TRANSFER.09 (a taking) are opposite propositions that happen to share an
+	// ontology family: admitting either frame for the other sense produces a
+	// fluent sentence with the wrong predicate.
+	if c.Family != "UNKNOWN" && ep.SenseID != "" && !c.realizesSense(ep.SenseID) {
+		return false, HardWrongPredicate, "construction " + c.ID + " does not realize sense " + ep.SenseID
+	}
+	// The frame must have a slot for every role the event fills. A role with
+	// nowhere to go is silently dropped, and dropping the recipient of a
+	// hand-over reverses the proposition.
+	if role, missing := unfillableRole(ep, c); missing {
+		return false, HardRoleUnrealizable, "construction " + c.ID +
+			" has no slot for the " + role + " of " + string(ep.EventID)
 	}
 	// A copular predication cannot carry negation or modality: rejecting here
 	// is cheaper than producing "Taro is not is called".
@@ -476,6 +424,93 @@ func (rt *realizer) checkConstruction(ep *EventPlan, c *Construction) (ok bool, 
 	return true, "", ""
 }
 
+// unfillableRole returns the first role the event fills that the construction's
+// pattern has no slot for. A role with nowhere to go is silently dropped, and
+// dropping the recipient of a hand-over reverses the proposition: that is how
+// 「太郎が花子に本を渡した」 was offered as 「太郎は本を受け取った」 (plan.md §36).
+//
+// Only roles the construction is expected to carry count. A frame may leave an
+// adjunct unexpressed, and it may fold a clausal argument into its predicate,
+// but it may not drop a participant it names nowhere.
+func unfillableRole(ep *EventPlan, c *Construction) (role string, missing bool) {
+	if ep == nil || c == nil {
+		return "", false
+	}
+	for _, r := range sortedRoles(ep.Args) {
+		np := ep.Args[r]
+		if np == nil || np.Omitted() {
+			continue
+		}
+		// A clausal argument is realized inside the predicate by the quoting or
+		// chaining machinery, not as a slot of its own.
+		if np.IsClause {
+			continue
+		}
+		if !frameBinds(c, ep, r) {
+			return r, true
+		}
+	}
+	return "", false
+}
+
+// frameBinds reports whether the construction's pattern has a place for the
+// role. The two generic slots are interpreted the way the realizer interprets
+// them: SUBJ takes the construction's subject role and, when that is unfilled,
+// the first of the fallback roles resolveSubject walks; OBJ takes whichever
+// direct-object role the event fills.
+func frameBinds(c *Construction, ep *EventPlan, role string) bool {
+	hasSubject, hasObject := false, false
+	for _, t := range tokens(c.Pattern) {
+		switch {
+		case t == "SUBJ":
+			hasSubject = true
+		case t == "OBJ":
+			hasObject = true
+		case isSlotToken(t):
+			if roleOfToken(t) == role {
+				return true
+			}
+		}
+	}
+	// OBJ is checked before SUBJ: the object slot is the one that binds the
+	// direct-object roles, and a frame that names both (SUBJ V OBJ to
+	// RECIPIENT) uses SUBJ for a different participant.
+	if hasObject {
+		switch role {
+		case jlir.RolePatient, jlir.RoleTheme, jlir.RoleStimulus, jlir.RoleProduct:
+			return true
+		}
+	}
+	if hasSubject {
+		if role == subjectRoleOf(c) {
+			return true
+		}
+		if np := ep.Args[subjectRoleOf(c)]; np != nil && !np.Omitted() {
+			return false
+		}
+		for _, alt := range alternativeSubjects() {
+			if np := ep.Args[alt]; np != nil && !np.Omitted() {
+				return role == alt
+			}
+		}
+	}
+	return false
+}
+
+// sortedRoles returns the filled roles of a plan in a deterministic order, so
+// the role the ledger names does not depend on map iteration.
+func sortedRoles(args map[string]*NPPlan) []string {
+	out := make([]string, 0, len(args))
+	for r, np := range args {
+		if np == nil || np.Omitted() {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // isCopular reports whether a construction is a bare copula.
 func isCopular(c *Construction) bool {
 	switch c.Family {
@@ -485,12 +520,11 @@ func isCopular(c *Construction) bool {
 	return false
 }
 
-// terminal interns a leaf node.
-func (rt *realizer) terminal(label, lex string, prob float64, rule string, hard bool) string {
-	if prob <= 0 {
-		prob = 0.0001
-	}
-	return rt.b.Add(label, []forest.Alt{{Lex: lex, Probability: prob, Rule: rule, Hard: hard}})
+// terminal interns a leaf node. Every leaf the realizer interns is a surface
+// form that must appear verbatim in some candidate, so it is always hard: a
+// branch carrying it is a real branch, never a dominated one.
+func (rt *realizer) terminal(label, lex string) string {
+	return rt.b.Add(label, []forest.Alt{{Lex: lex, Probability: 1, Hard: true}})
 }
 
 // altNode interns a node with explicit alternatives.
@@ -524,6 +558,10 @@ func (rt *realizer) chain(parts []piece, tail string) string {
 		if len(p.alts) == 0 {
 			continue
 		}
+		if p.sealed {
+			node = rt.b.Add(p.label, p.alts)
+			continue
+		}
 		attached := make([]forest.Alt, 0, len(p.alts))
 		for _, a := range p.alts {
 			if node != "" {
@@ -552,9 +590,19 @@ func (rt *realizer) idPiece(c *Construction) piece {
 	}}}
 }
 
-// reject records a branch killed by a hard constraint.
+// reject records a branch killed by a hard constraint. Only HARD rules reach
+// this ledger: a ranking fact is not a violation and must not be presented as
+// one (plan.md §37).
 func (rt *realizer) reject(slot, lex, rule, reason, stage string) {
 	if rule == "" {
+		return
+	}
+	// Only a violation may enter the ledger. A frame that merely lost a
+	// scoring race is a ranking fact, and plan.md §37 forbids presenting the two
+	// as one thing: the UI sorts this ledger by the rule prefix, so a SOFT entry
+	// here reads as an illegal frame.
+	if !strings.HasPrefix(rule, HardRulePrefix) {
+		rt.note("not a violation, so not a rejection: %q %s (%s)", lex, reason, rule)
 		return
 	}
 	rt.out.AddRejected(forest.RejectedBranch{
@@ -603,16 +651,6 @@ func (rt *realizer) entity(np *NPPlan) *jlir.Entity {
 		return nil
 	}
 	return rt.g.Entity(np.EntityID)
-}
-
-// prepositionFor returns the preposition of a role for a construction.
-func (rt *realizer) prepositionFor(c *Construction, role string) string {
-	if c != nil {
-		if p, ok := c.Prep[role]; ok {
-			return p
-		}
-	}
-	return enPrep(role)
 }
 
 // tokens splits a pattern into its slots.
@@ -690,42 +728,6 @@ func resolveSubject(ep *EventPlan, c *Construction) *NPPlan {
 		}
 	}
 	return ep.Subject
-}
-
-// pruneSlot applies Pareto dominance inside one slot: an alternative that is
-// dominated on (loss, probability) by a sibling is dropped before it ever
-// multiplies the search space (plan.md §45).
-func pruneSlot(label string, alts []forest.Alt, loss func(forest.Alt) LossVector) []forest.Alt {
-	if len(alts) < 2 || loss == nil {
-		return alts
-	}
-	losses := make([]LossVector, len(alts))
-	for i, a := range alts {
-		losses[i] = loss(a)
-	}
-	drop := make([]bool, len(alts))
-	for i := range alts {
-		for j := range alts {
-			if i == j {
-				continue
-			}
-			if losses[j].Dominates(losses[i]) && alts[j].Probability >= alts[i].Probability {
-				drop[i] = true
-				break
-			}
-		}
-	}
-	out := make([]forest.Alt, 0, len(alts))
-	for i, a := range alts {
-		if drop[i] {
-			continue
-		}
-		out = append(out, a)
-	}
-	if len(out) == 0 {
-		out = alts[:1]
-	}
-	return out
 }
 
 // orDefault returns s, or def when s is empty.

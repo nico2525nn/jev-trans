@@ -225,40 +225,61 @@ internal/
 
   | 入力 | 出力 | 状態 |
   |---|---|---|
-  | 太郎が花子に本を渡した。 | Taro gave a book to Hanako. | GOOD |
-  | 太郎は本を花子に渡しました | Taro gave a book to Hanako. | GOOD |
+  | 太郎が花子に本を渡した。 | Taro gave a book to Hanako. | LOSSY |
+  | 太郎は本を花子に渡しました | Taro gave a book to Hanako. | LOSSY |
   | Taro gave a book to Hanako. | 太郎は本を花子に渡しましたね。 | LOSSY |
   | She eats rice. | 彼女は米を食べますね。 | LOSSY |
+  | He drank water. | 彼は水を飲みましたね。 | LOSSY |
   | 私は行きます。 | I go. | LOSSY |
   | 彼女が来た。 | She came. | LOSSY |
-  | 彼は水を飲みました。 | He drank a water. | LOSSY |
-  | He drank water. | 彼は水を飲みましたね。 | LOSSY |
 
-- 原文が供給しない性別が生成されることはありません
+- **偽の保証が出ていません。** 解析できない述語は語彙化されず、候補は生成されず、
+  `UNPARSABLE` として報告されます。プレースホルダー語（`unknowns.` など）は
+  出力に一切現れません（`TestNoPlaceholderEverReachesTheOutput` で固定）。
+- 原文が支持しない性別が生成されることはありません
 - スコープの曖昧性は解決されず、`皆が帰らなかった` は2読みを保持します
-- 検証器は再構文解析で命題が変化した候補を却下し、却下理由を記録します
-- 空文字列・絵文字・句読点のみ・非日本語文字混在の入力で panic しません
+- 検証器のハードゲートは候補数に関係なく必ず実行されます
+- 形態素カバレッジは常に100%（未知語も1トークンとして保持）
+- `ー` を含む外来語（ビール、コーヒー、テーブル）が1形態素になります
+- 空・空白のみ・絵文字・句読点のみ・非言語混在で panic しません
 
 ### 未対応・制約
 
-以下は実際の不足です。
+以下は実際の不足です。誇張せずに列挙します。
 
-- **語彙カバレッジ**。日本語辞書は約750表層で、英語解析器の一般名詞・動詞の
-  辞書は意図的に小さくしています。未知の動詞・名詞は推測せず `UNKNOWN`
-  となり、カバレッジ警告とともに記録されます。構築選択は系統単位の
-  キーで行われるため、`追う`（chase）が系統の "go" として実現され
-  `LOSSY` になることがあります。
-- **量化詞**。`全員が帰らなかった` は英語の `ALL` を失います。量名詞を
-  実体化する構築が未登録のためです。検証器はこれを検知し、"did not go"
-  を出さないよう候補を却下します。
-- **二節文**。ので/ば/けど などで連結された文は節への解析までは行われます
-  が、第二節の生成が未実装で `UNPARSABLE` になります。
-- **英語再構文解析のカバレッジ**。英語解析器の一般名詞・動詞の辞書が
-  小さいため、未知の語を含む文の再解析は `UNKNOWN.VERB` となり
-  検証器が unparsable として却下します。
+- **カバレッジが限定的**。ベンチの30例中13例が翻訳でき、残り17例は
+  `UNPARSABLE` です。以前は残り17例も誤った文を `EXACT` として出していたので
+  改善していますが、実用には距離があります。
+- **日本語の動詞形が限定的**。対象言語の動詞形選択は辞書と構築ライブラリに
+  依存しており、`来る` の一部形が `きました` のように選ばれる場合があります。
+- **英語→日本語の開辞彙が薄い**。名詞約400語と閉じた類のみ。英語再構文解析
+  が `UNKNOWN` を返す語は候補が却下されます。
+- **命令・義務の枠**（`Taro should read a book.`）は生成的でないため
+  対応していません。
+- **量化詞**。`全員が帰らなかった` の `ALL` は失われます。
+- **二節文**。ので/ば/けど などで連結された文は `UNPARSABLE` です。
 - **判断モデルの実API未検証**。クライアントは `systemone` の仕様どおりに
   実装され、prior へ劣化する経路は動作しますが、この環境には
   `OPENCODE_API_KEY` がないため実APIへのリクエストは行っていません。
+
+### テスト
+
+`go test ./...` で7パッケージ・約1,900行のテストが走ります。plan.md の
+約束を直接固定しています。
+
+| テスト | 固定する約束 |
+|---|---|
+| `TestNoPlaceholderEverReachesTheOutput` | プレースホルダー語が/absent でないこと |
+| `TestUnresolvedPredicateIsReportedNotGuessed` | 未解決述語は `UNPARSABLE` |
+| `TestEveryCircuitStageRuns` | plan.md §6 の18段が全て走ること |
+| `TestNoGenderIsInvented` | plan.md §4 / §22 |
+| `TestMorphemeCoverageIsTotal` | 文字が脱落しないこと |
+| `TestKatakanaLoanwordIsOneToken` | `ー` による外来語の分裂 |
+| `TestScopeAmbiguitySurvivesAnalysis` | plan.md §13 |
+| `TestScopeRepresentationsAgree` | スコープ重みの二重表現の不一致 |
+| `TestVerifyIsIdempotentOnIdenticalGraphs` | 検証器の較正 |
+| `TestRealizeIsIndependentlyExercisable` | plan.md §36 を単独実行できること |
+| `TestNoPanicOnHostileInput` | 堅牢性 |
 
 ---
 

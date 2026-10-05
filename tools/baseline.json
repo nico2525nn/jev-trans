@@ -1,0 +1,273 @@
+{
+ "en->ja::!!": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "en->ja::A cat chased a dog.": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "en->ja::He drank water.": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.27,
+   "propositional": 0,
+   "referential": 0.16,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "彼は水を飲みましたね。"
+ },
+ "en->ja::He read a book.": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.27,
+   "propositional": 0,
+   "referential": 0.16,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "彼は本を見ますね。"
+ },
+ "en->ja::I go.": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "en->ja::She eats rice.": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.27,
+   "propositional": 0,
+   "referential": 0.16,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "彼女は米を食べますね。"
+ },
+ "en->ja::Taro gave a book to Hanako.": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.27,
+   "propositional": 0,
+   "referential": 0.24,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "太郎は本を花子に渡しましたね。"
+ },
+ "en->ja::The book is on the table.": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "en->ja::The quick brown fox jumps over the lazy dog.": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "en->ja::The teacher came.": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "en->ja::They left.": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "ja->en::": {
+  "crash": false,
+  "loss": null,
+  "status": "ERROR",
+  "text": null
+ },
+ "ja->en::ABC": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "ja->en::。": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "ja->en::先生が来た。": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.28,
+   "propositional": 0,
+   "referential": 0.08,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "A teacher came."
+ },
+ "ja->en::全員が帰らなかった。": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "ja->en::太郎が花子に本を渡した。": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.1,
+   "propositional": 0,
+   "referential": 0.24,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "Taro gave a book to Hanako."
+ },
+ "ja->en::太郎は本を花子に渡しました": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.27,
+   "propositional": 0,
+   "referential": 0.24,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "Taro gave a book to Hanako."
+ },
+ "ja->en::学生が勉強しました。": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "ja->en::彼は本を読みました。": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.27,
+   "propositional": 0,
+   "referential": 0.16,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "He saw a book."
+ },
+ "ja->en::彼は水を飲みました。": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.27,
+   "propositional": 0,
+   "referential": 0.16,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "He drank a water."
+ },
+ "ja->en::彼女が来た。": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.1,
+   "propositional": 0,
+   "referential": 0.08,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "She came."
+ },
+ "ja->en::本を読みました。": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.37,
+   "propositional": 0,
+   "referential": 0.08,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "saw a book."
+ },
+ "ja->en::猫が犬を追った。": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.1,
+   "propositional": 0.5,
+   "referential": 0.08,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "A cat went."
+ },
+ "ja->en::田中さんはビールを飲みました。": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "ja->en::私は行きます。": {
+  "crash": false,
+  "loss": {
+   "implicature": 0,
+   "pragmatic": 0.27,
+   "propositional": 0,
+   "referential": 0.08,
+   "stylistic": 0,
+   "temporal": 0
+  },
+  "status": "LOSSY",
+  "text": "I go."
+ },
+ "ja->en::私は行きます。嬉しそうでした。": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "ja->en::雨が降ったので開催した。": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "ja->en::非nings": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ },
+ "ja->en::😀": {
+  "crash": false,
+  "loss": null,
+  "status": "UNPARSABLE",
+  "text": null
+ }
+}

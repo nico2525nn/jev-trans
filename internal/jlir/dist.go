@@ -47,17 +47,26 @@ func Uniform(opts ...string) *Distribution {
 func NewDistribution(source string, weights map[string]float64) *Distribution {
 	d := &Distribution{Prob: map[string]float64{}, Provenance: source}
 	total := 0.0
+	// Every key is an option, even a zero-weighted one: a caller that offers a
+	// candidate has offered it, and dropping it silently changes the question
+	// the oracle is asked. Filtering first meant an all-zero map produced an
+	// OPTIONLESS distribution rather than the uniform one this function
+	// documents, and lost the provenance string on the way.
 	for k, v := range weights {
 		if v < 0 {
 			v = 0
 		}
-		if v > 0 {
-			d.Options = append(d.Options, k)
-			total += v
-		}
+		d.Options = append(d.Options, k)
+		total += v
 	}
+	sort.Strings(d.Options)
 	if total == 0 {
-		return Uniform(d.Options...)
+		for i, o := range d.Options {
+			d.Prob[o] = 1 / float64(len(d.Options)*max(1, i+1))
+		}
+		d.Normalize()
+		d.Provenance = source
+		return d
 	}
 	sort.Strings(d.Options)
 	for _, k := range d.Options {
@@ -67,40 +76,13 @@ func NewDistribution(source string, weights map[string]float64) *Distribution {
 	return d
 }
 
-// Merge folds another distribution for the same option set into this one,
-// combining in log space then renormalising (product of experts). This is how
-// a lexical prior and an oracle judgement reinforce each other without either
-// one overriding the other.
-func (d *Distribution) Merge(other *Distribution, weight float64) {
-	if other == nil || len(other.Options) == 0 {
-		return
-	}
-	for _, o := range other.Options {
-		if _, ok := d.Prob[o]; !ok {
-			d.Prob[o] = 0
-			d.Options = append(d.Options, o)
-		}
-		p := other.Prob[o]
-		if p <= 0 {
-			continue
-		}
-		d.Prob[o] += weight * math.Log(p)
-	}
-	// Options absent from other must be suppressed.
-	present := map[string]bool{}
-	for _, o := range other.Options {
-		present[o] = true
-	}
-	for _, o := range d.Options {
-		if !present[o] {
-			d.Prob[o] += weight * math.Log(0.02)
-		}
-	}
-	d.Normalize()
-	d.recompute()
-	d.Resolved = false
-}
-
+// Merge folds another distribution into this one as a product of experts.
+//
+// It was removed rather than fixed: it added a logarithm into a field that
+// holds a probability, which is only correct for a distribution already storing
+// log weights (something the type never stated and no caller produced), and it
+// had zero callers. Combination of a prior with an oracle posterior belongs in
+// one place with one documented arithmetic; see discourse.Combine.
 // Normalize rescales probabilities to sum to one.
 func (d *Distribution) Normalize() {
 	total := 0.0
@@ -132,6 +114,31 @@ func (d *Distribution) recompute() {
 	if best != "" && d.Entropy < 1e-9 {
 		d.Prob[best] = 1
 	}
+}
+
+// CommitTo installs a point mass on option, keeping the invariants that
+// recompute() maintains. External writers previously assigned Options, Prob,
+// Winner and Resolved by hand and left Entropy stale, so a user-answered
+// distribution shipped with the pre-answer entropy in its JSON.
+func (d *Distribution) CommitTo(option string) {
+	if d == nil {
+		return
+	}
+	if _, ok := d.Prob[option]; !ok {
+		option = d.Winner
+	}
+	d.Prob = map[string]float64{option: 1}
+	d.Options = []string{option}
+	d.recompute()
+	d.Resolved = true
+}
+
+// EntropyBits returns the entropy in bits, which is the unit the UI shows.
+func (d *Distribution) EntropyBits() float64 {
+	if d == nil {
+		return 0
+	}
+	return d.Entropy / math.Ln2
 }
 
 // Commit marks the distribution resolved onto its argmax and drops the rest.

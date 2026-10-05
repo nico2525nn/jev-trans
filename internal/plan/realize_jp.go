@@ -25,32 +25,46 @@ import (
 
 // jpVerb is a Japanese predicate with the conjugation class the inflections
 // need. Class values are described in the row tables below.
+//
+// There is deliberately no honorific field. Honorificity is a property of the
+// construction, not a form derivable from a plain verb: every honorific Japanese
+// predicate is its own lexeme (お渡しする, 申す, 参见 the honorific stems), and
+// appending ます to a dictionary form yields a non-word, because those stems
+// already end in the dictionary る (おっしゃる, いらっしゃる, ご覧になる).
+// Carrying both mechanisms produced 「という名前だおっしゃるます」.
 type jpVerb struct {
 	dic string // dictionary form
 	cls string // conjugation class
-	hon string // honorific form, "" when the verb has none
-	hum string // humble form
 }
 
 // Japanese conjugation classes.
 const (
-	jpIchidan = "i"   // 食べる, 見る, いる
-	jpU       = "u"   // 買う, 言う, 行く
-	jpKu      = "ku"  // 書く, 聞く
-	jpGu      = "gu"  // 泳ぐ
-	jpSu      = "su"  // 出す, 話す-like godan verbs
-	jpTsu     = "tsu" // 立つ, 待つ, 持つ
-	jpNu      = "nu"  // 死ぬ
-	jpBu      = "bu"  // 飛ぶ, 遊ぶ
-	jpMu      = "mu"  // 読む, 飲む
-	jpRu      = "ru"  // 作る, 取る, 帰る, 言う-like
-	jpSuru    = "s"   // する
-	jpKuru    = "k"   // 来る
-	jpCopula  = "da"  // だ, である
-	jpIAdj    = "adj" // いい, 欲しい, 大きい
-	jpNaAdj   = "na"  // 好き, 静か, same
-	jpNominal = "nom" // べき, こと
+	jpIchidan = "i"    // 食べる, 見る, いる
+	jpU       = "u"    // 買う, 言う, 行く
+	jpKu      = "ku"   // 書く, 聞く
+	jpGu      = "gu"   // 泳ぐ
+	jpSu      = "su"   // 出す, 話す-like godan verbs
+	jpTsu     = "tsu"  // 立つ, 待つ, 持つ
+	jpNu      = "nu"   // 死ぬ
+	jpBu      = "bu"   // 飛ぶ, 遊ぶ
+	jpMu      = "mu"   // 読む, 飲む
+	jpRu      = "ru"   // 作る, 取る, 帰る, 言う-like
+	jpSuru    = "s"    // する
+	jpKuru    = "k"    // 来る
+	jpCopula  = "da"   // だ, である
+	jpIAdj    = "adj"  // いい, 欲しい, 大きい
+	jpNaAdj   = "na"   // 好き, 静か, same
+	jpNaru    = "naru" // になる compounds: ご覧になる, ご存じになる
+	jpNominal = "nom"  // べき, こと
 )
+
+// jpNaruStems lists the honorific 〜になる compounds. Their stem is the honorific
+// form itself (ご覧に, ご存じに), not a plain verb stem plus な, because the
+// honorific stem already carries the に.
+var jpNaruStems = map[string]string{
+	"ご覧になる":  "ご覧に",
+	"ご存じになる": "ご存じに",
+}
 
 // jpNegVowel is the godan negative row: う→わ, く→か, ぐ→が, す→さ, つ→た,
 // ぬ→な, ぶ→ば, む→ま, る→ら.
@@ -63,6 +77,16 @@ var jpNegVowel = map[string]string{
 var jpTeRow = map[string]string{
 	jpU: "って", jpKu: "いて", jpGu: "いで", jpSu: "して", jpTsu: "って",
 	jpNu: "んで", jpBu: "んで", jpMu: "んで", jpRu: "って",
+}
+
+// jpRenyouRow is the godan 連用形 row as it appears before たい: 買いたい,
+// 書きたい, 泳ぎたい, 話したい, 待ちたい, 死にたい, 飛みたい, 飲みたい,
+// 作りたい, 帰りたい. It agrees with jpPoliteConsonant everywhere except く
+// and つ, which are irregular here (書く→書きたい, not 書きたい; 待つ→待ちたい,
+// not ちたい), so it is its own table rather than a reuse of that one.
+var jpRenyouRow = map[string]string{
+	jpSu: "し", jpU: "い", jpKu: "い", jpGu: "ぎ", jpTsu: "っ",
+	jpNu: "に", jpBu: "び", jpMu: "み", jpRu: "り",
 }
 
 // jpPotentialRow is the godan potential row change.
@@ -92,36 +116,35 @@ var jpFamilyVerb = map[string]jpVerb{
 	"GIVE":    {dic: "渡す", cls: jpRu},
 	"RECEIVE": {dic: "受け取る", cls: jpRu},
 	"TAKE":    {dic: "取る", cls: jpRu},
-	"SAY":     {dic: "言う", cls: jpU, hon: "おっしゃる", hum: "申す"},
+	"SAY":     {dic: "言う", cls: jpU},
 	"TELL":    {dic: "伝える", cls: jpRu},
 	"ASK":     {dic: "尋ねる", cls: jpRu},
 	"ANSWER":  {dic: "答える", cls: jpRu},
-	"SPEAK":   {dic: "話す", cls: jpU, hon: "おっしゃる"},
-	"MOVE":    {dic: "行く", cls: jpU, hon: "いらっしゃる"},
-	"ARRIVE":  {dic: "着く", cls: jpKu, hon: "いらっしゃる"},
-	"LEAVE":   {dic: "出る", cls: jpRu, hon: "いらっしゃる"},
-	"MEET":    {dic: "会う", cls: jpU, hon: "お会いする"},
+	"SPEAK":   {dic: "話す", cls: jpSu},
+	"MOVE":    {dic: "行く", cls: jpU},
+	"ARRIVE":  {dic: "着く", cls: jpKu},
+	"LEAVE":   {dic: "出る", cls: jpRu},
+	"MEET":    {dic: "会う", cls: jpU},
 	"WANT":    {dic: "欲しい", cls: jpIAdj},
 	"INTEND":  {dic: "思う", cls: jpU},
-	"BE":      {dic: "いる", cls: jpRu, hon: "いらっしゃる"},
-	"EXIST":   {dic: "ある", cls: jpRu, hum: "ございます"},
-	"NAMED":   {dic: "言う", cls: jpU, hon: "おっしゃる"},
-	"BECOME":  {dic: "なる", cls: jpRu, hon: "いらっしゃる"},
-	"HAVE":    {dic: "持つ", cls: jpTsu, hon: "お持ちする"},
+	"BE":      {dic: "いる", cls: jpRu},
+	"EXIST":   {dic: "ある", cls: jpRu},
+	"NAMED":   {dic: "言う", cls: jpU},
+	"BECOME":  {dic: "なる", cls: jpRu},
+	"HAVE":    {dic: "持つ", cls: jpTsu},
 	"ABLE":    {dic: "出来る", cls: jpIchidan},
 	"MUST":    {dic: "", cls: jpNominal},
 	"SHOULD":  {dic: "", cls: jpNominal},
 	"MAY":     {dic: "いい", cls: jpIAdj},
-	"EAT":     {dic: "食べる", cls: jpIchidan, hon: "いらっしゃる", hum: "いただく"},
-	"DRINK":   {dic: "飲む", cls: jpMu, hon: "いらっしゃる", hum: "いただく"},
-	"SEE":     {dic: "見る", cls: jpIchidan, hon: "ご覧になる"},
+	"EAT":     {dic: "食べる", cls: jpIchidan},
+	"DRINK":   {dic: "飲む", cls: jpMu},
+	"SEE":     {dic: "見る", cls: jpIchidan},
 	"HEAR":    {dic: "聞く", cls: jpKu},
-	"KNOW":    {dic: "知る", cls: jpRu, hon: "ご存じになる"},
+	"KNOW":    {dic: "知る", cls: jpRu},
 	"THINK":   {dic: "思う", cls: jpU},
 	"BELIEVE": {dic: "思う", cls: jpU},
 	"COMPARE": {dic: "比べる", cls: jpRu},
 	"COPULA":  {dic: "だ", cls: jpCopula},
-	"NOMINAL": {dic: "", cls: jpNominal},
 	"LIKE":    {dic: "好き", cls: jpNaAdj},
 	"SHOW":    {dic: "見せる", cls: jpRu},
 	"READ":    {dic: "読む", cls: jpMu},
@@ -138,10 +161,47 @@ var jpFamilyVerb = map[string]jpVerb{
 	"SELL":    {dic: "売る", cls: jpRu},
 }
 
+// taiStem is the stem 〜たい attaches to. For an ichidan verb it is the stem
+// itself (食べたい); for a godan verb it is the stem plus the 連用形 row
+// consonant (飲みたい, 待ちたい), which is neither the te-form nor the masu stem.
+func (v jpVerb) taiStem() string {
+	switch v.cls {
+	case jpIchidan, jpIAdj, jpNaAdj, jpSuru, jpKuru, jpNaru:
+		return v.stem()
+	}
+	if r, ok := jpRenyouRow[v.cls]; ok {
+		return v.stem() + r
+	}
+	return v.te()
+}
+
+// taStem is the stem 〜てもいい and 〜てはいけない attach to: the te-form minus
+// the て that closes it. For the n-row verbs that て is で, not て — 読んで ends
+// in で, so trimming a literal て gave 「読んでてもいい」 instead of
+// 「読んでもいい」.
+func (v jpVerb) taStem() string {
+	t := v.te()
+	switch {
+	case strings.HasSuffix(t, "で"):
+		return t[:len(t)-len("で")]
+	case strings.HasSuffix(t, "て"):
+		return t[:len(t)-len("て")]
+	}
+	return t
+}
+
 // stem returns the 連用形 (masu stem) of a verb: the form polite ます attaches
 // to, and the base of the ichidan te-form.
 func (v jpVerb) stem() string {
 	switch v.cls {
+	case jpNaru:
+		// A になる compound conjugates from the stem of になる itself, which is
+		// な: ご覧になる is ご覧に+なる, so its stem is ご覧に+な. The shorter
+		// ご覧に gave ご覧にります.
+		if st, ok := jpNaruStems[v.dic]; ok {
+			return st + "な"
+		}
+		return v.dic + "な"
 	case jpSuru:
 		if v.dic == "する" {
 			return "し"
@@ -173,6 +233,8 @@ func dropLastRune(s string) string {
 // negStem returns the stem the plain negative attaches to.
 func (v jpVerb) negStem() string {
 	switch v.cls {
+	case jpNaru:
+		return v.stem()
 	case jpIchidan, jpIAdj:
 		return v.stem()
 	case jpSuru:
@@ -193,6 +255,10 @@ func (v jpVerb) negStem() string {
 // te returns the て-form.
 func (v jpVerb) te() string {
 	switch v.cls {
+	case jpNaru:
+		// ご覧になって: the stem already ends in に, so the て-form is a って
+		// attachment rather than a row change.
+		return v.stem() + "って"
 	case jpIchidan:
 		return v.stem()
 	case jpSuru:
@@ -211,6 +277,8 @@ func (v jpVerb) te() string {
 // potential returns the potential form.
 func (v jpVerb) potential() string {
 	switch v.cls {
+	case jpNaru:
+		return v.stem() + "れる"
 	case jpIchidan:
 		return v.stem() + "られる"
 	case jpSuru:
@@ -221,7 +289,9 @@ func (v jpVerb) potential() string {
 		return ""
 	}
 	if r, ok := jpPotentialRow[v.cls]; ok {
-		return v.negStem() + r
+		// The potential of a godan verb attaches the row to the STEM
+		// (読める), not to the negative stem, which gave 読まえる.
+		return v.stem() + r
 	}
 	return ""
 }
@@ -235,6 +305,8 @@ func (v jpVerb) negative() string {
 		return "こない"
 	case jpIAdj:
 		return v.dic + "くない"
+	case jpNaru:
+		return v.stem() + "らない"
 	case jpCopula:
 		return "ではない"
 	case jpNaAdj, jpNominal:
@@ -251,6 +323,8 @@ func (v jpVerb) negativePolite() string {
 	switch v.cls {
 	case jpCopula:
 		return "ではありません"
+	case jpNaru:
+		return v.stem() + "りません"
 	case jpNaAdj, jpNominal, jpIAdj:
 		if v.dic == "" {
 			return ""
@@ -270,6 +344,9 @@ func (v jpVerb) past() string {
 		return "しなかった"
 	case jpKuru:
 		return "こなかった"
+	case jpNaru:
+		// ご覧になった: a になる compound is な in its past too.
+		return v.stem() + "った"
 	case jpIchidan:
 		return v.stem() + "なかった"
 	case jpIAdj:
@@ -328,6 +405,8 @@ func (v jpVerb) politeStem() string {
 		return v.stem() + "し"
 	case jpKuru:
 		return "き"
+	case jpNaru:
+		return v.stem()
 	case jpIchidan, jpIAdj, jpNaAdj, jpNominal, jpCopula:
 		return v.stem()
 	}
@@ -342,6 +421,8 @@ func (v jpVerb) polite() string {
 	switch v.cls {
 	case jpCopula:
 		return "です"
+	case jpNaru:
+		return v.stem() + "ります"
 	case jpIAdj, jpNaAdj, jpNominal:
 		if v.dic == "" {
 			return ""
@@ -359,6 +440,8 @@ func (v jpVerb) pastPolite() string {
 	switch v.cls {
 	case jpCopula:
 		return "でした"
+	case jpNaru:
+		return v.stem() + "りました"
 	case jpIAdj, jpNaAdj, jpNominal:
 		if v.dic == "" {
 			return ""
@@ -376,6 +459,8 @@ func (v jpVerb) negativePastPolite() string {
 	switch v.cls {
 	case jpCopula:
 		return "ではありませんでした"
+	case jpNaru:
+		return v.stem() + "りませんでした"
 	case jpIAdj, jpNaAdj, jpNominal:
 		if v.dic == "" {
 			return ""
@@ -389,28 +474,14 @@ func (v jpVerb) negativePastPolite() string {
 }
 
 // jpConjugate realizes a verb for an event plan: tense, polarity, politeness
-// and honorific all come from the plan, never from the surface.
+// and aspect all come from the plan, never from the surface. quoted marks a
+// reporting verb whose content is a quoted clause: it keeps the plain form,
+// because the clause carries the tense.
 func jpConjugate(v jpVerb, ep *EventPlan, quoted bool) string {
 	polite := ep != nil && ep.Politeness >= 0.5
 	negative := ep != nil && strings.EqualFold(ep.Polarity, jlir.PolarityNegative)
 	past := ep != nil && ep.Tense == jlir.TensePast
 
-	// Honorific: the addressee directed form replaces the verb entirely. A
-	// quoted clause is never replaced: 「〜と思う」 must keep what is quoted.
-	if ep != nil && ep.Honorific && !quoted {
-		if v.hon != "" {
-			if past {
-				if polite {
-					return v.hon + "ました"
-				}
-				return v.hon + "た"
-			}
-			if polite {
-				return v.hon + "ます"
-			}
-			return v.hon
-		}
-	}
 	if v.cls == jpNominal && v.dic == "" {
 		return ""
 	}
@@ -474,13 +545,9 @@ func (rt *realizer) framesJP(ep *EventPlan, first bool, depth int) []frame {
 				"construction "+c.ID+" puts material after an embedded clause", "realization")
 			continue
 		}
-		if sfp := rt.p.SentenceFinal; sfp != "" && usedV && rt.clauseFinal {
+		if sfp := rt.p.SentenceFinal; sfp != "" && usedV && rt.clauseFinal && !rt.embedded {
 			parts = append(parts, piece{label: "SFP",
 				alts: []forest.Alt{{Lex: sfp, Probability: 0.85, Hard: true}}})
-		}
-		if !rt.clauseFinal {
-			parts = append(parts, piece{label: "PUNCT",
-				alts: []forest.Alt{{Lex: rt.punctuation(rt.p), Probability: 0.9, Hard: true}}})
 		}
 		parts = append(parts, rt.idPiece(c))
 		if len(parts) <= 1 {
@@ -491,51 +558,65 @@ func (rt *realizer) framesJP(ep *EventPlan, first bool, depth int) []frame {
 	return out
 }
 
-// patternJP walks a Japanese construction pattern. A bare token is a case
-// particle or connective binding the next slot; SUBJ takes the topic/subject
-// marker the projection decided; "quote" folds the embedded clause into the
-// predicate, because Japanese puts 〜と before the verb.
+// patternJP walks a Japanese construction pattern. A lowercase token is a case
+// particle that marks the slot immediately to its LEFT, because Japanese writes
+// the particle after the noun phrase it belongs to: "SUBJ OBJ を RECIPIENT に V".
+// SUBJ is the one slot the pattern does not mark: は versus が is an
+// information-structure decision of the projection (plan.md §19), so the
+// pattern's SUBJ takes whatever subject marker the projection chose.
+//
+// The pattern is the owner of every other particle. Reading it as first
+// precedence and the projection's NPPlan.Particle as a fallback is what produced
+// 「〜を同じです」 and 「〜を〜を比べます」: the projection's を was consulted
+// first, so the particle the pattern states about を or と was never emitted and
+// a stray を was appended where none belonged.
+//
+// "quote" folds the clausal argument into the predicate, because Japanese puts
+// 〜と before the verb, and the fold keeps the embedded clause's own
+// alternatives in the forest instead of collapsing it to one string.
 func (rt *realizer) patternJP(ep *EventPlan, c *Construction, depth int, usedV *bool) []piece {
 	var parts []piece
-	toks := sovOrder(tokens(c.Pattern))
-	particle := ""
 	seenV := false
-	var quotText string
 	add := func(p piece) {
 		if p.empty() {
 			return
 		}
 		parts = append(parts, p)
 	}
-	for _, tok := range toks {
+	toks := tokens(c.Pattern)
+	// marks[i] is the particle the pattern wrote after slot i, and
+	// consumed[i] records that the token at i was such a particle rather than
+	// an unplaced one.
+	marks := make([]string, len(toks))
+	consumed := make([]bool, len(toks))
+	for i := range toks {
+		if i+1 < len(toks) && isSlotToken(toks[i]) && !isSlotToken(toks[i+1]) {
+			marks[i] = toks[i+1]
+			consumed[i+1] = true
+		}
+	}
+	for i, tok := range toks {
+		if consumed[i] {
+			continue
+		}
+		mark := marks[i]
 		switch tok {
 		case "SUBJ":
 			if rt.noSubject {
 				continue
 			}
 			np := resolveSubject(ep, c)
-			npParticle := ""
-			if np != nil {
-				npParticle = np.Particle
-			}
-			p := firstNonEmpty(particle, npParticle, c.TopicMark, Ga)
-			subject := rt.jpNPPiece(np, "SUBJ", p, false, depth, c)
-			particle = ""
+			subject := rt.jpNPPiece(np, "SUBJ", jpSubjectMark(np, c), false, depth, c)
 			add(subject)
 		case "V":
-			if seenV && c.Lex2 == "" {
+			if seenV {
 				continue
 			}
-			alts := rt.jpVerbPiece(ep, c, depth, seenV, quotText)
+			alts := rt.jpVerbPiece(ep, c, depth)
 			seenV = true
 			*usedV = true
 			if len(alts) > 0 {
 				parts = append(parts, piece{label: "V", alts: alts})
-			}
-			if !seenV && c.Lex2 != "" && c.Chain != "" {
-				// A chain construction continues past the object: 食べたい.
-				parts = append(parts, piece{label: "TAIL",
-					alts: []forest.Alt{{Lex: c.Lex2, Probability: c.Naturalness, Hard: true}}})
 			}
 		case "JOIN":
 			// Japanese complementation is carried by the quoting particle inside
@@ -546,18 +627,57 @@ func (rt *realizer) patternJP(ep *EventPlan, c *Construction, depth int, usedV *
 					alts: []forest.Alt{{Lex: c.Tail, Probability: 0.9, Hard: true}}})
 			}
 		case "quote":
-			np := complementArg(ep)
-			if np != nil && np.Clause != nil {
-				quotText = rt.subClauseText(np.Clause, depth)
+			if np := complementArg(ep); np != nil && np.Clause != nil {
+				sub := rt.quoteClause(ep, c, np, depth)
+				if sub == "" {
+					rt.reject(string(ep.EventID), c.ID, HardMissingArg,
+						"construction "+c.ID+" cannot realize its quoted clause", "realization")
+					return nil
+				}
+				add(piece{label: "V", sealed: true, alts: []forest.Alt{{
+					Probability: c.Naturalness, Rule: "<" + c.ID + ">", Hard: true,
+					Children: []string{sub},
+				}}})
+				seenV = true
+				*usedV = true
 			}
 		case "OBJ":
 			role := objectRole(ep)
 			np := ep.Args[role]
+			if np != nil && np.IsClause && c.Chain != "" {
+				// A thematic-verb chain continues the clause's own predicate, so
+				// the clause itself is not a subtree here — but its arguments
+				// belong in the matrix frame, because Japanese writes them
+				// there: 「太郎は本を読まなければならない」, not a nested clause.
+				// The theme clause's own arguments are read from ITS plan, not
+				// from the matrix event: the matrix event binds one role (the
+				// theme) to the clause, and the clause is what names the object.
+				subjNP := resolveSubject(ep, c)
+				for _, r := range sortedRoles(np.Clause.Args) {
+					arg := np.Clause.Args[r]
+					if r == role || arg == nil || arg.IsClause || arg.Omitted() {
+						continue
+					}
+					// The matrix subject already realizes the same referent when
+					// the theme names it, so repeating it would give 「太郎が
+					// 太郎を...」. The comparison is on the referent, not the
+					// pointer: the two plans are separate objects.
+					if isSubjectRole(r) && subjNP != nil && arg.EntityID == subjNP.EntityID {
+						continue
+					}
+					// Each theme argument takes the particle the pattern writes
+					// after OBJ; a theme with several arguments has one particle,
+					// so the first gets it and the rest are bare.
+					p := mark
+					mark = ""
+					add(rt.jpNPPiece(arg, roleOfToken(r), p, false, depth, c))
+				}
+				continue
+			}
 			if np != nil && np.IsClause {
-				if c.Complement == "quot" || c.Chain != "" {
-					// Folded into the predicate by the "quote" token or by the
-					// thematic verb chain: the clausal argument is the verb, not
-					// a phrase, so it is not realized as a subtree here.
+				if c.Complement == "quot" {
+					// Folded into the predicate by the "quote" token: the
+					// clausal argument is the verb, not a phrase.
 					continue
 				}
 				// Japanese puts 〜と before the verb, so a clausal argument can
@@ -566,84 +686,36 @@ func (rt *realizer) patternJP(ep *EventPlan, c *Construction, depth int, usedV *
 					"construction "+c.ID+" cannot realize a clausal argument in Japanese", "realization")
 				return nil
 			}
-			npParticle := ""
-			if np != nil {
-				npParticle = np.Particle
-			}
-			p := firstNonEmpty(particle, c.Case[role], npParticle, Wo)
-			obj := rt.jpNPPiece(np, "OBJ", p, false, depth, c)
-			particle = ""
-			add(obj)
+			add(rt.jpNPPiece(np, "OBJ", mark, false, depth, c))
 		default:
 			if isSlotToken(tok) {
 				role := roleOfToken(tok)
 				np := ep.Args[role]
 				if np != nil && np.IsClause && (c.Complement == "quot" || c.Chain != "") {
-					particle = ""
 					continue
 				}
-				npParticle := ""
-				if np != nil {
-					npParticle = np.Particle
-				}
-				p := firstNonEmpty(particle, c.Case[role], npParticle, "")
-				slot := rt.jpNPPiece(np, tok, p, false, depth, c)
-				particle = ""
-				add(slot)
+				add(rt.jpNPPiece(np, tok, mark, false, depth, c))
 				continue
 			}
-			particle = tok
+			// A bare particle with no slot to its left is a data error in the
+			// pattern, not a particle waiting for a slot.
+			rt.note("construction %s: the particle %q has no slot to mark", c.ID, tok)
 		}
 	}
 	return parts
 }
 
-// jpNPPiece returns the alternatives of one argument slot.
-func sovOrder(toks []string) []string {
-	vAt := -1
-	for i, t := range toks {
-		if t == "V" {
-			vAt = i
-			break
-		}
+// jpSubjectMark returns the topic/subject marker of a Japanese subject. は and
+// が are chosen by the projection from the information structure (plan.md §19),
+// so no construction states one.
+func jpSubjectMark(np *NPPlan, c *Construction) string {
+	if np == nil {
+		return Ga
 	}
-	if vAt < 0 {
-		return toks
+	if np.Particle == Wa || np.Particle == Ga {
+		return np.Particle
 	}
-	alreadySOV := true
-	for _, t := range toks[vAt+1:] {
-		if isJPArgumentToken(t) {
-			alreadySOV = false
-			break
-		}
-	}
-	if alreadySOV {
-		return toks
-	}
-	out := make([]string, 0, len(toks))
-	out = append(out, toks[:vAt]...)
-	for _, t := range toks[vAt+1:] {
-		if isJPArgumentToken(t) {
-			out = append(out, t)
-		}
-	}
-	out = append(out, "V")
-	for _, t := range toks[vAt+1:] {
-		if !isJPArgumentToken(t) {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
-// isJPArgumentToken reports whether a pattern token names an argument that must
-// precede the verb.
-func isJPArgumentToken(t string) bool {
-	switch t {
-	case "SUBJ", "OBJ", "MID":
-		return true
-	}
-	return isSlotToken(t)
+	return Ga
 }
 
 func (rt *realizer) jpNPPiece(np *NPPlan, slot, particle string, initial bool, depth int, c *Construction) piece {
@@ -659,64 +731,47 @@ func (rt *realizer) jpNPPiece(np *NPPlan, slot, particle string, initial bool, d
 	return piece{label: slot, alts: rt.jpNPAlts(np, slot, particle, initial)}
 }
 
-// firstNonEmpty returns the first non-empty argument.
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
+// quoteClause realizes a quoted clause (〜と思う) as a subtree of the packed
+// forest whose continuation is the reporting verb. The packed forest
+// concatenates an alternative's lexeme BEFORE its child, so a clause followed by
+// a verb cannot be two sibling pieces; it has to be one subtree. Building it
+// that way, rather than realizing it into a throwaway forest and collapsing it to
+// trees[0].Text(), is what keeps the embedded clause's own construction
+// alternatives alive in the candidate set (plan.md §17, §38).
+func (rt *realizer) quoteClause(ep *EventPlan, c *Construction, np *NPPlan, depth int) string {
+	// The reporting verb is conjugated in its own right — 「と思った」 is past
+	// because the reporting event is past, not because the quoted event is —
+	// and it takes the quoting particle と before it.
+	v := lookupJPVerb(c.Lex, c.Family)
+	form := jpConjugate(v, ep, false)
+	if form == "" {
+		form = orDefault(v.dic, c.Lex)
 	}
-	return ""
-}
-
-// subClauseText realizes an embedded clause as one string. Japanese quoting
-// places the clause inside the predicate (〜と思う), which the packed forest
-// cannot express as a prefix, so the embedded clause is realized into its best
-// string first and interned as a single terminal.
-func (rt *realizer) subClauseText(ep *EventPlan, depth int) string {
-	if ep == nil || depth >= maxEmbedDepth {
+	if strings.EqualFold(ep.Polarity, jlir.PolarityNegative) &&
+		!strings.Contains(form, "ない") && !strings.Contains(form, "ません") &&
+		!strings.Contains(form, "では") {
+		rt.reject(string(ep.EventID), form, HardPolarity,
+			"negative polarity of "+string(ep.EventID)+" has no Japanese realization", "realization")
 		return ""
 	}
-	tmp := forest.NewBuilder("q")
-	sub := &realizer{r: rt.r, p: rt.p, g: rt.g, gp: rt.gp, b: tmp, out: rt.out, l: rt.l}
-	node := sub.clauseNode(ep, false, depth+1)
-	if node == "" {
-		return ""
-	}
-	trees := tmp.Root(node).Enumerate(1)
-	if len(trees) == 0 {
-		return ""
-	}
-	return trees[0].Text()
+	// The continuation has to be an interned node: the chain builder splices it
+	// in as a child id, and handing it a bare lexeme made the forest resolve it
+	// as some unrelated node.
+	return rt.clauseTail(np.Clause, rt.terminal("QTAIL", To+form), false, depth+1)
 }
 
 // jpVerbPiece builds the predicate of one Japanese clause: tense, polarity,
-// politeness, honorific, aspect and completion all derive from the plan.
-func (rt *realizer) jpVerbPiece(ep *EventPlan, c *Construction, depth int, second bool, quotText string) []forest.Alt {
-	// The second V slot carries the construction's second predicate piece
-	// (られる in 〜食べられる).
-	if second {
-		if c.Lex2 == "" {
-			return nil
-		}
-		return []forest.Alt{{Lex: c.Lex2, Probability: c.Naturalness, Rule: "<" + c.ID + ">", Hard: true}}
-	}
+// politeness, aspect and completion all derive from the plan.
+func (rt *realizer) jpVerbPiece(ep *EventPlan, c *Construction, depth int) []forest.Alt {
 	if c.Chain != "" {
 		return rt.jpChainPiece(ep, c)
 	}
 	v := lookupJPVerb(c.Lex, c.Family)
-	if quotText != "" {
-		v.cls = jpU
-		v.dic = quotText + "と"
-	}
-	form := jpConjugate(v, ep, quotText != "")
+	form := jpConjugate(v, ep, false)
 	if form == "" {
-		if quotText == "" {
-			rt.reject(string(ep.EventID), c.Lex, HardUnknownSense,
-				"no Japanese form for "+c.Family, "realization")
-			return nil
-		}
-		form = quotText + "と"
+		rt.reject(string(ep.EventID), c.Lex, HardUnknownSense,
+			"no Japanese form for "+c.Family, "realization")
+		return nil
 	}
 	if strings.EqualFold(ep.Polarity, jlir.PolarityNegative) && !strings.Contains(form, "ない") &&
 		!strings.Contains(form, "ません") && !strings.Contains(form, "では") {
@@ -740,10 +795,14 @@ func (rt *realizer) jpChainPiece(ep *EventPlan, c *Construction) []forest.Alt {
 		stem = theme.negStem()
 	case "nai_n":
 		stem = theme.negStem() + "な"
-	case "masu", "te":
-		stem = theme.stem()
-	case "tai":
+	case "te":
 		stem = theme.te()
+	case "ta":
+		stem = theme.taStem()
+	case "tai":
+		stem = theme.taiStem()
+	case "dic":
+		stem = theme.dic
 	case "potential":
 		stem = theme.potential()
 	}
@@ -771,14 +830,6 @@ func jpThemeVerb(ep *EventPlan) jpVerb {
 		}
 	}
 	return jpVerb{}
-}
-
-// jpVerbClass reports whether a literal surface is a known verb form.
-func jpVerbClass(lex string) (jpVerb, bool) {
-	if v, ok := jpFamilyVerb[lex]; ok {
-		return v, true
-	}
-	return jpVerb{}, false
 }
 
 // lookupJPVerb resolves the verb of a construction: its own Lex when it has
@@ -809,15 +860,19 @@ var jpVerbClassOf = map[string]string{
 	"受け取る": jpRu, "もらう": jpU, "いただく": jpKu, "取る": jpRu,
 	"言う": jpU, "申す": jpU, "おっしゃる": jpU, "伝える": jpRu,
 	"尋ねる": jpRu, "聞く": jpKu, "頼む": jpU, "答える": jpU,
-	"話す": jpU, "行く": jpU, "着く": jpKu, "到着する": jpSuru,
+	"話す": jpSu, "行く": jpU, "着く": jpKu, "到着する": jpSuru,
 	"出る": jpRu, "去る": jpRu, "会う": jpU, "お会いする": jpSuru,
 	"欲しい": jpIAdj, "ほしい": jpIAdj, "たい": jpIAdj,
 	"思う": jpU, "考える": jpRu, "打算する": jpSuru,
 	"いる": jpRu, "いらっしゃる": jpU, "ある": jpRu, "なる": jpRu,
 	"持つ": jpTsu, "お持ちする": jpSuru, "できる": jpIchidan, "出来る": jpIchidan,
 	"いい": jpIAdj, "よい": jpIAdj, "食べる": jpIchidan, "観る": jpIchidan,
-	"飲む": jpMu, "見る": jpIchidan, "ご覧になる": jpIAdj, "聞こえる": jpIchidan,
-	"知る": jpRu, "ご存じになる": jpIAdj, "比べる": jpRu, "似ている": jpIchidan,
+	"飲む": jpMu, "見る": jpIchidan, "聞こえる": jpIchidan,
+	// ご覧になる / ご存じになる are the honorific 〜になる compounds: a verb
+	// stem plus になる. Classifying them as i-adjectives made the polite form
+	// append です to a whole phrase: 「本をご覧になるです」.
+	"ご覧になる": jpNaru, "ご存じになる": jpNaru,
+	"知る": jpRu, "比べる": jpRu, "似ている": jpIchidan,
 	"同じ": jpIAdj, "好き": jpNaAdj, "嫌い": jpNaAdj, "見せる": jpRu,
 	"読む": jpMu, "書く": jpKu, "寝る": jpRu, "住む": jpMu, "働く": jpKu,
 	"開く": jpKu, "閉める": jpRu, "始める": jpRu, "やめる": jpRu,
@@ -825,6 +880,11 @@ var jpVerbClassOf = map[string]string{
 	"使う": jpU, "立つ": jpTsu, "死ぬ": jpNu, "飛ぶ": jpBu, "作る": jpRu,
 	"帰る": jpRu, "出す": jpSu, "泳ぐ": jpGu, "泣く": jpKu, "急ぐ": jpGu,
 	"待つ": jpTsu, "遊ぶ": jpBu, "知る人": jpRu, "始まる": jpRu,
+	// 読む and 知る's neighbours are not in the construction library, but the
+	// chain frames build on whatever verb the theme carries, so the common
+	// stems the analyzer produces are registered too. Without them 読む fell
+	// through to jpClassOf, which classifies by final kana and called it a
+	// う-verb: 読める, 買いたい, 帰りたい all came out wrong.
 	"終わる": jpRu, "わかる": jpRu, "分かる": jpRu, "載る": jpRu,
 	"おっしゃる人": jpU, "なさる": jpU, "なさる人": jpU,
 	"だ": jpCopula, "である": jpCopula, "です": jpCopula,
@@ -845,6 +905,15 @@ func jpClassOf(lex string) string {
 		return jpSuru
 	case "くる", "来る":
 		return jpKuru
+	}
+	// A 〜になる compound behaves as なる: になる → になった, になって.
+	if strings.HasSuffix(lex, "になる") {
+		return jpNaru
+	}
+	// A verb whose dictionary form ends in the honorific 〜になる compound
+	// pattern is one even when the ending is not literally になる.
+	if _, ok := jpNaruStems[lex]; ok {
+		return jpNaru
 	}
 	runes := []rune(lex)
 	last := string(runes[len(runes)-1])
@@ -885,10 +954,12 @@ func jpClassOf(lex string) string {
 // jpNPAlts builds the alternatives of one Japanese phrase.
 func (rt *realizer) jpNPAlts(np *NPPlan, slot, particle string, initial bool) []forest.Alt {
 	var alts []forest.Alt
+	// The construction pattern owns the case particle. The projection's
+	// NPPlan.Particle is used only where the pattern is silent (the subject,
+	// where は/が is an information-structure decision), so re-adding it here as
+	// a rival alternative is what produced 「〜を同じです」 and 「〜を〜を比べます」:
+	// both appeared alongside the pattern's own と.
 	particles := []string{particle}
-	if np.Particle != "" && np.Particle != particle {
-		particles = append(particles, np.Particle)
-	}
 
 	// Pronoun reading: suppressed unless the projection licensed it, because
 	// plan.md §47 forbids turning every English "he" into 彼.

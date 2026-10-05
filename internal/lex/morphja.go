@@ -94,6 +94,12 @@ var (
 	// produce.
 	jaConj map[string][]jaReading
 
+	// jaConjByBase is the reverse index, built alongside jaConj so that
+	// JAConjugations can answer for one base without walking every surface.
+	// internal/lexicon consumes it instead of re-conjugating the lexicon a
+	// second time with its own, divergent tables.
+	jaConjByBase map[string]map[string]bool
+
 	// jaAdjIStems maps an い-adjective stem (高) to its dictionary form (高い).
 	jaAdjIStems map[string]string
 )
@@ -152,6 +158,7 @@ func init() {
 // inflection backwards, the analyzer replays the forward tables.
 func jaBuildConjIndex() {
 	jaConj = make(map[string][]jaReading, 8192)
+	jaConjByBase = make(map[string]map[string]bool, 512)
 	jaAdjIStems = make(map[string]string, 256)
 
 	verbs := make([]string, 0, 512)
@@ -159,7 +166,11 @@ func jaBuildConjIndex() {
 	for surface, entries := range jaLex {
 		verb, adj := false, false
 		for _, e := range entries {
-			if c := e.feats["cj"]; c == "g" || c == "i" {
+			// Every declared class reaches the index, not just the two that
+			// happened to be implemented: a cj=s/cj=r/cj=k row silently
+			// contributed no conjugations at all, which is how 来られた became
+			// unsegmentable.
+			if e.feats["cj"] != "" {
 				verb = true
 			}
 			if e.pos == forest.POSAdj && e.feats["adj"] == "i" {
@@ -196,11 +207,33 @@ func jaBuildConjIndex() {
 			if !ok {
 				continue
 			}
-			jaAddConjugations(stem, base, row.forms, "godan "+row.kana+"-row: ")
-			for _, ir := range jaGodanIrregular {
-				if ir.kana == row.kana {
-					jaAddConjugation(stem+ir.sfx, base, ir.feats, ir.note)
+			// A verb that opts out of its row's te/past (行く) gets only the
+			// irregular pair; every other verb in the row keeps いて / いた,
+			// which is correct for 聞く and 書か.
+			if ir, ok := jaGodanIrregular[base]; ok {
+				jaAddConjugations(stem, base, jaGodanRowForms(row, true), "godan "+row.kana+"-row: ")
+				for _, f := range ir {
+					jaAddConjugation(stem+f.sfx, base, f.feats, f.note)
 				}
+				continue
+			}
+			jaAddConjugations(stem, base, jaGodanRowForms(row, false), "godan "+row.kana+"-row: ")
+		case "s", "r", "k":
+			// The する / さる / 来る classes have no okurigana row that predicts
+			// them, and the members of a class do not even agree with one
+			// another: する is irregular where いたす takes the さ-row, なさる
+			// takes the さ-row where いらっしゃる takes the ら-row, and くる
+			// needs きた where 来る needs 来た. Each verb therefore states its
+			// own stem and its own forms; a row with no table contributes
+			// nothing rather than a stem that manufactures non-words.
+			row, ok := jaIrregularVerbForms[base]
+			if !ok {
+				continue
+			}
+			note := "irregular " + class + "-class: "
+			jaAddConjugations(row.stem, base, row.forms, note)
+			for _, fm := range row.fulls {
+				jaAddConjugation(fm.sfx, base, fm.feats, note+fm.note)
 			}
 		}
 	}
@@ -215,6 +248,20 @@ func jaBuildConjIndex() {
 	}
 }
 
+// sortedJAKeys returns a surface set in sorted order, so every caller that
+// exposes a derived list gets the same deterministic answer (house rule 4).
+func sortedJAKeys(m map[string]bool) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func jaAddConjugations(stem, base string, forms []jaForm, prefix string) {
 	for _, fm := range forms {
 		jaAddConjugation(stem+fm.sfx, base, fm.feats, prefix+fm.note)
@@ -227,6 +274,10 @@ func jaAddConjugation(key, base string, feats map[string]string, note string) {
 		cp[k] = v
 	}
 	jaConj[key] = append(jaConj[key], jaReading{base: base, feats: cp, note: note})
+	if jaConjByBase[base] == nil {
+		jaConjByBase[base] = make(map[string]bool, 32)
+	}
+	jaConjByBase[base][key] = true
 }
 
 // jaSplitLastRune returns s without its final rune, which is how the
@@ -487,20 +538,264 @@ func jaGodanTableFor(base string) (godanTable, bool) {
 	return godanTable{}, false
 }
 
-// jaGodanIrreg is one irregular te/ta form of a given base okurigana. 行く goes
+// jaGodanIrreg is one irregular te/ta form of a godan verb. 行く goes
 // 行って/行った, which no okurigana row predicts; it is listed rather than
 // special-cased in the matcher.
+//
+// The key is the verb, not the row: the く-row te-form いて is correct for 聞く
+// and wrong only for 行く, so a per-kana table would have to suppress it for
+// every く-row verb at once.
 type jaGodanIrreg struct {
-	kana  string
 	sfx   string
 	feats map[string]string
 	note  string
 }
 
-var jaGodanIrregular = []jaGodanIrreg{
-	{kana: "く", sfx: "って", feats: map[string]string{jaFtConj: "te"}, note: "irregular te-form (行く→行って)"},
-	{kana: "く", sfx: "った", feats: map[string]string{jaFtTense: jaTensePast}, note: "irregular past (行く→行った)"},
+var jaGodanIrregular = map[string][]jaGodanIrreg{
+	"行く": {
+		{sfx: "って", feats: map[string]string{jaFtConj: "te"}, note: "irregular te-form (行く→行って)"},
+		{sfx: "った", feats: map[string]string{jaFtTense: jaTensePast}, note: "irregular past (行く→行った)"},
+	},
 }
+
+// jaGodanRowForms returns the row's forms, with the te-form and past dropped
+// when the verb opts out of them.
+//
+// Emitting both meant 行いて and 行いた were indexed beside the real 行って /
+// 行った: the row's shape applied to a verb that does not take it. Dropping the
+// regular pair makes the irregular entry the whole answer for such a verb
+// rather than an addition to a wrong guess.
+func jaGodanRowForms(row godanTable, dropTeTa bool) []jaForm {
+	if !dropTeTa {
+		return row.forms
+	}
+	out := make([]jaForm, 0, len(row.forms))
+	for _, fm := range row.forms {
+		if fm.kind == jaKindTe || fm.kind == jaKindTa {
+			continue
+		}
+		out = append(out, fm)
+	}
+	return out
+}
+
+// jaIrregularVerb is the conjugation data of one verb whose class no okurigana
+// row predicts. The class letter in the lexicon only selects which table a verb
+// consults; what actually distinguishes する from いたす, なさる from
+// いらっしゃる and くる from 来る is lexical, so it is written down per verb
+// rather than inferred from the final kana. Deriving it is what produced the
+// non-words こない / こます / こて / こた for 来る.
+type jaIrregularVerb struct {
+	// stem is the form the suffixes below attach to. It is not always the
+	// dictionary form minus its last rune: する's is し, so します is し+ます.
+	stem  string
+	forms []jaForm
+	// fulls are whole surfaces the stem rule cannot build: くる takes きて
+	// and きた, where the okurigana changes the く instead of following it.
+	fulls []jaForm
+}
+
+// jaIrregularVerbForms is the irregular-class conjugation table, keyed by
+// dictionary form. plan.md §25 step 1 is only honest if the analyzer really
+// knows the classes the data declares; a cj=s/cj=r/cj=k row with no entry here
+// gets no forward conjugations at all rather than wrong ones.
+var jaIrregularVerbForms = map[string]jaIrregularVerb{
+	// --- する class ------------------------------------------------------
+	// する is genuinely irregular: the stem し takes ます but the negative is
+	// しない, and しないでした is not a predictable shape either.
+	"する": {stem: "し", forms: jaFormOfSlice(
+		jaFormOf("ます", jaKindPlain, "polite present", "polite", jaPoliteMasu, jaFtTense, jaTensePresent),
+		jaFormOf("ました", jaKindTa, "polite past", "polite", jaPoliteMasu, jaFtTense, jaTensePast),
+		jaFormOf("ません", jaKindPlain, "polite negative",
+			"polite", jaPoliteMasu, jaFtTense, jaTensePresent, jaFtNegative, "1"),
+		jaFormOf("ませんでした", jaKindPlain, "polite negative past",
+			"polite", jaPoliteMasu, jaFtTense, jaTensePast, jaFtNegative, "1"),
+		jaFormOf("ましょう", jaKindPlain, "polite volitional", "mood", "volitional", "polite", jaPoliteMasu),
+		jaFormOf("ませんか", jaKindPlain, "polite question", "mood", "question", "polite", jaPoliteMasu),
+		jaFormOf("まして", jaKindPlain, "polite conjunctive", "polite", jaPoliteMasu, jaFtConj, "conjunctive"),
+		jaFormOf("て", jaKindTe, "te-form connective", jaFtConj, "te"),
+		jaFormOf("た", jaKindTa, "past", jaFtTense, jaTensePast),
+		jaFormOf("ない", jaKindPlain, "negative", jaFtNegative, "1"),
+		jaFormOf("なかった", jaKindPlain, "negative past", jaFtNegative, "1", jaFtTense, jaTensePast),
+		jaFormOf("ないです", jaKindPlain, "negative polite", jaFtNegative, "1", "polite", jaPoliteTei),
+		jaFormOf("ないでした", jaKindPlain, "negative polite past", jaFtNegative, "1", "polite", jaPoliteTei, jaFtTense, jaTensePast),
+		jaFormOf("なくて", jaKindTe, "negative te-form", jaFtNegative, "1", jaFtConj, "te"),
+		jaFormOf("たい", jaKindPlain, "desiderative", "desire", "1"),
+		jaFormOf("なさい", jaKindPlain, "polite imperative", "politeness", "command", "honorific", "respectful"),
+		jaFormOf("よう", jaKindPlain, "volitional", "mood", "volitional"),
+		jaFormOf("れば", jaKindPlain, "conditional", jaFtConj, "CONDITION"),
+		jaFormOf("たら", jaKindPlain, "conditional", jaFtConj, "CONDITION", jaFtTense, jaTensePast),
+		jaFormOf("たり", jaKindPlain, "conjunctive", jaFtConj, "AND"),
+		jaFormOf("させる", jaKindPlain, "causative", "causative", "1"),
+		jaFormOf("させられる", jaKindPlain, "causative-passive", "causative", "1", "passive", "1"),
+	)},
+	// 致す / いたす / 申す are the humble する verbs. They keep the し of する
+	// but not its irregularity: the stem 致 takes 致します, and the negative
+	// comes off the さ-row (致さない), not the ない-row.
+	"致す": {stem: "致", forms: jaFormOfSlice(
+		jaFormOf("します", jaKindPlain, "polite present", "polite", jaPoliteMasu, jaFtTense, jaTensePresent),
+		jaFormOf("しました", jaKindTa, "polite past", "polite", jaPoliteMasu, jaFtTense, jaTensePast),
+		jaFormOf("しません", jaKindPlain, "polite negative",
+			"polite", jaPoliteMasu, jaFtTense, jaTensePresent, jaFtNegative, "1"),
+		jaFormOf("しませんでした", jaKindPlain, "polite negative past",
+			"polite", jaPoliteMasu, jaFtTense, jaTensePast, jaFtNegative, "1"),
+		jaFormOf("して", jaKindTe, "te-form connective", jaFtConj, "te"),
+		jaFormOf("した", jaKindTa, "past", jaFtTense, jaTensePast),
+		jaFormOf("さない", jaKindPlain, "negative", jaFtNegative, "1"),
+		jaFormOf("さなかった", jaKindPlain, "negative past", jaFtNegative, "1", jaFtTense, jaTensePast),
+	)},
+	"いたす": {stem: "いた", forms: jaFormOfSlice(
+		jaFormOf("します", jaKindPlain, "polite present", "polite", jaPoliteMasu, jaFtTense, jaTensePresent),
+		jaFormOf("しました", jaKindTa, "polite past", "polite", jaPoliteMasu, jaFtTense, jaTensePast),
+		jaFormOf("しません", jaKindPlain, "polite negative",
+			"polite", jaPoliteMasu, jaFtTense, jaTensePresent, jaFtNegative, "1"),
+		jaFormOf("しませんでした", jaKindPlain, "polite negative past",
+			"polite", jaPoliteMasu, jaFtTense, jaTensePast, jaFtNegative, "1"),
+		jaFormOf("して", jaKindTe, "te-form connective", jaFtConj, "te"),
+		jaFormOf("した", jaKindTa, "past", jaFtTense, jaTensePast),
+		jaFormOf("さない", jaKindPlain, "negative", jaFtNegative, "1"),
+		jaFormOf("さなかった", jaKindPlain, "negative past", jaFtNegative, "1", jaFtTense, jaTensePast),
+	)},
+	"申す": {stem: "申", forms: jaFormOfSlice(
+		jaFormOf("します", jaKindPlain, "polite present", "polite", jaPoliteMasu, jaFtTense, jaTensePresent),
+		jaFormOf("しました", jaKindTa, "polite past", "polite", jaPoliteMasu, jaFtTense, jaTensePast),
+		jaFormOf("しません", jaKindPlain, "polite negative",
+			"polite", jaPoliteMasu, jaFtTense, jaTensePresent, jaFtNegative, "1"),
+		jaFormOf("しませんでした", jaKindPlain, "polite negative past",
+			"polite", jaPoliteMasu, jaFtTense, jaTensePast, jaFtNegative, "1"),
+		jaFormOf("して", jaKindTe, "te-form connective", jaFtConj, "te"),
+		jaFormOf("した", jaKindTa, "past", jaFtTense, jaTensePast),
+		jaFormOf("さない", jaKindPlain, "negative", jaFtNegative, "1"),
+		jaFormOf("さなかった", jaKindPlain, "negative past", jaFtNegative, "1", jaFtTense, jaTensePast),
+	)},
+	// --- さる class ------------------------------------------------------
+	// なさる is a さる verb: the stem なさ takes the さ-row, so the plain
+	// negative is なさない and the te-form is なさって.
+	"なさる": {stem: "なさ", forms: jaFormOfSlice(
+		jaFormOf("る", jaKindPlain, "plain present"),
+		jaFormOf("います", jaKindPlain, "polite present", "polite", jaPoliteMasu, jaFtTense, jaTensePresent),
+		jaFormOf("いました", jaKindTa, "polite past", "polite", jaPoliteMasu, jaFtTense, jaTensePast),
+		jaFormOf("いません", jaKindPlain, "polite negative",
+			"polite", jaPoliteMasu, jaFtTense, jaTensePresent, jaFtNegative, "1"),
+		jaFormOf("さない", jaKindPlain, "negative", jaFtNegative, "1"),
+		jaFormOf("さなかった", jaKindPlain, "negative past", jaFtNegative, "1", jaFtTense, jaTensePast),
+		jaFormOf("さなくて", jaKindTe, "negative te-form", jaFtNegative, "1", jaFtConj, "te"),
+		jaFormOf("って", jaKindTe, "te-form connective", jaFtConj, "te"),
+		jaFormOf("った", jaKindTa, "past", jaFtTense, jaTensePast),
+		jaFormOf("たら", jaKindPlain, "conditional", jaFtConj, "CONDITION", jaFtTense, jaTensePast),
+		jaFormOf("たり", jaKindPlain, "conjunctive", jaFtConj, "AND"),
+		jaFormOf("させる", jaKindPlain, "causative", "causative", "1"),
+		jaFormOf("させられる", jaKindPlain, "causative-passive", "causative", "1", "passive", "1"),
+		jaFormOf("される", jaKindPlain, "passive/honorific", "passive", "1", "honorific", "respectful"),
+		jaFormOf("たい", jaKindPlain, "desiderative", "desire", "1"),
+		jaFormOf("なさい", jaKindPlain, "polite imperative", "politeness", "command", "honorific", "respectful"),
+		jaFormOf("よう", jaKindPlain, "volitional", "mood", "volitional"),
+		jaFormOf("れば", jaKindPlain, "conditional", jaFtConj, "CONDITION"),
+	)},
+	// いらっしゃる is also a さる verb but takes the ら-row, so it shares
+	// almost nothing with なさる. That disagreement is exactly why the class
+	// cannot be generated from a row and each verb gets its own entry.
+	"いらっしゃる": {stem: "いらっしゃ", forms: jaFormOfSlice(
+		jaFormOf("る", jaKindPlain, "plain present"),
+		jaFormOf("います", jaKindPlain, "polite present", "polite", jaPoliteMasu, jaFtTense, jaTensePresent),
+		jaFormOf("いました", jaKindTa, "polite past", "polite", jaPoliteMasu, jaFtTense, jaTensePast),
+		jaFormOf("いません", jaKindPlain, "polite negative",
+			"polite", jaPoliteMasu, jaFtTense, jaTensePresent, jaFtNegative, "1"),
+		jaFormOf("らない", jaKindPlain, "negative", jaFtNegative, "1"),
+		jaFormOf("らなかった", jaKindPlain, "negative past", jaFtNegative, "1", jaFtTense, jaTensePast),
+		jaFormOf("って", jaKindTe, "te-form connective", jaFtConj, "te"),
+		jaFormOf("った", jaKindTa, "past", jaFtTense, jaTensePast),
+		jaFormOf("たら", jaKindPlain, "conditional", jaFtConj, "CONDITION", jaFtTense, jaTensePast),
+		jaFormOf("たり", jaKindPlain, "conjunctive", jaFtConj, "AND"),
+		jaFormOf("ないです", jaKindPlain, "negative polite", jaFtNegative, "1", "polite", jaPoliteTei),
+		jaFormOf("たい", jaKindPlain, "desiderative", "desire", "1"),
+		jaFormOf("よう", jaKindPlain, "volitional", "mood", "volitional"),
+	)},
+	// --- 来る class ------------------------------------------------------
+	// 来る is irregular in the strongest sense: it has no okurigana, its
+	// negative is 来ない, and its honorific (尊敬) is 来られる. The honorific
+	// past 来られた is the most frequent Japanese past form in polite prose
+	// and must be recoverable, so られる/られた are in the table.
+	"来る": {stem: "来", forms: jaFormOfSlice(
+		jaFormOf("る", jaKindPlain, "plain present"),
+		jaFormOf("ます", jaKindPlain, "polite present", "polite", jaPoliteMasu, jaFtTense, jaTensePresent),
+		jaFormOf("ました", jaKindTa, "polite past", "polite", jaPoliteMasu, jaFtTense, jaTensePast),
+		jaFormOf("ません", jaKindPlain, "polite negative",
+			"polite", jaPoliteMasu, jaFtTense, jaTensePresent, jaFtNegative, "1"),
+		jaFormOf("ませんでした", jaKindPlain, "polite negative past",
+			"polite", jaPoliteMasu, jaFtTense, jaTensePast, jaFtNegative, "1"),
+		jaFormOf("ましょう", jaKindPlain, "polite volitional", "mood", "volitional", "polite", jaPoliteMasu),
+		jaFormOf("て", jaKindTe, "te-form connective", jaFtConj, "te"),
+		jaFormOf("た", jaKindTa, "past", jaFtTense, jaTensePast),
+		jaFormOf("ない", jaKindPlain, "negative", jaFtNegative, "1"),
+		jaFormOf("なかった", jaKindPlain, "negative past", jaFtNegative, "1", jaFtTense, jaTensePast),
+		jaFormOf("ないです", jaKindPlain, "negative polite", jaFtNegative, "1", "polite", jaPoliteTei),
+		jaFormOf("なくて", jaKindTe, "negative te-form", jaFtNegative, "1", jaFtConj, "te"),
+		jaFormOf("ず", jaKindPlain, "negative formal", jaFtNegative, "1", "form", "formal"),
+		jaFormOf("ないで", jaKindPlain, "negative imperative", jaFtNegative, "1", "mood", "imperative"),
+		jaFormOf("られる", jaKindPlain, "honorific/potential/passive",
+			"honorific", "respectful", "potential", "1", "passive", "1"),
+		jaFormOf("られない", jaKindPlain, "honorific negative",
+			"honorific", "respectful", "potential", "1", "passive", "1", jaFtNegative, "1"),
+		jaFormOf("られました", jaKindPlain, "honorific past (polite)",
+			"honorific", "respectful", "potential", "1", "passive", "1",
+			jaFtTense, jaTensePast, "polite", jaPoliteMasu),
+		// られた is the honorific past in the plain register, and it is the
+		// single most frequent way a past-tense verb appears in modern
+		// Japanese: 先生が来られた. Nothing else produces this surface, so
+		// without the row the whole verb is unsegmentable.
+		jaFormOf("られた", jaKindTa, "honorific past",
+			"honorific", "respectful", "potential", "1", "passive", "1", jaFtTense, jaTensePast),
+		jaFormOf("させる", jaKindPlain, "causative", "causative", "1"),
+		jaFormOf("させられる", jaKindPlain, "causative-passive", "causative", "1", "passive", "1"),
+		jaFormOf("ないです", jaKindPlain, "negative polite", jaFtNegative, "1", "polite", jaPoliteTei),
+		jaFormOf("ないでした", jaKindPlain, "negative polite past",
+			jaFtNegative, "1", "polite", jaPoliteTei, jaFtTense, jaTensePast),
+		jaFormOf("たい", jaKindPlain, "desiderative", "desire", "1"),
+		jaFormOf("よう", jaKindPlain, "volitional", "mood", "volitional"),
+		jaFormOf("い", jaKindPlain, "imperative", "mood", "imperative"),
+		jaFormOf("たら", jaKindPlain, "conditional", jaFtConj, "CONDITION", jaFtTense, jaTensePast),
+		jaFormOf("たり", jaKindPlain, "conjunctive", jaFtConj, "AND"),
+		jaFormOf("れば", jaKindPlain, "conditional", jaFtConj, "CONDITION"),
+		jaFormOf("ながら", jaKindPlain, "conjunctive", jaFtConj, "AND"),
+		jaFormOf("そう", jaKindPlain, "evidential", "evidential", "1"),
+	)},
+	// くる is 来る written in kana. Its stem is く, so く+ない = こない is
+	// right, but the te-form changes the く rather than following it (きて,
+	// not くて), which is why those two are listed as whole surfaces.
+	"くる": {
+		stem: "く",
+		forms: jaFormOfSlice(
+			jaFormOf("る", jaKindPlain, "plain present"),
+			jaFormOf("ます", jaKindPlain, "polite present", "polite", jaPoliteMasu, jaFtTense, jaTensePresent),
+			jaFormOf("ました", jaKindTa, "polite past", "polite", jaPoliteMasu, jaFtTense, jaTensePast),
+			jaFormOf("ません", jaKindPlain, "polite negative",
+				"polite", jaPoliteMasu, jaFtTense, jaTensePresent, jaFtNegative, "1"),
+			jaFormOf("ませんでした", jaKindPlain, "polite negative past",
+				"polite", jaPoliteMasu, jaFtTense, jaTensePast, jaFtNegative, "1"),
+			jaFormOf("ない", jaKindPlain, "negative", jaFtNegative, "1"),
+			jaFormOf("なかった", jaKindPlain, "negative past", jaFtNegative, "1", jaFtTense, jaTensePast),
+			jaFormOf("ないです", jaKindPlain, "negative polite", jaFtNegative, "1", "polite", jaPoliteTei),
+			jaFormOf("なくて", jaKindTe, "negative te-form", jaFtNegative, "1", jaFtConj, "te"),
+			jaFormOf("たら", jaKindPlain, "conditional", jaFtConj, "CONDITION", jaFtTense, jaTensePast),
+			jaFormOf("たり", jaKindPlain, "conjunctive", jaFtConj, "AND"),
+			jaFormOf("られる", jaKindPlain, "honorific/potential/passive",
+				"honorific", "respectful", "potential", "1", "passive", "1"),
+			jaFormOf("られない", jaKindPlain, "honorific negative",
+				"honorific", "respectful", "potential", "1", "passive", "1", jaFtNegative, "1"),
+			jaFormOf("い", jaKindPlain, "imperative", "mood", "imperative"),
+			jaFormOf("よう", jaKindPlain, "volitional", "mood", "volitional"),
+		),
+		fulls: jaFormOfSlice(
+			jaFormOf("きて", jaKindTe, "te-form (く→き)", jaFtConj, "te"),
+			jaFormOf("きた", jaKindTa, "past (く→き)", jaFtTense, jaTensePast),
+		),
+	},
+}
+
+// jaFormOfSlice is the literal form of a table row, so each entry above reads
+// as the conjugations it contributes.
+func jaFormOfSlice(fs ...jaForm) []jaForm { return fs }
 
 // jaAdjIForms are the inflected forms of an い-adjective stem.
 var jaAdjIForms = []jaForm{
@@ -583,6 +878,39 @@ func (a *jaAnalyzer) end(j int) int { return a.off[j] }
 func (a *jaAnalyzer) sub(i, j int) string { return a.src[a.start(i):a.end(j)] }
 
 // --- public API -----------------------------------------------------------
+
+// JAConjugations returns every surface the analyzer's forward conjugation
+// index generates for a dictionary base, sorted. It is the single source of
+// truth for "which inflected forms of this word exist": internal/lexicon used
+// to keep a second, divergent copy of the whole Japanese conjugation engine,
+// and it is that copy which indexed 行いて beside 行って.
+//
+// A base the analyzer does not know yields no forms. That is the honest answer
+// — the lexicon cannot assert a conjugation the morphology engine cannot
+// produce — so a caller needing broader coverage must add the verb to the
+// analyzer's tables rather than re-deriving the forms here.
+// JAClass reports the conjugation class the analyzer holds for a dictionary
+// base — "i" (ichidan), "g" (godan), "s" (する), "r" (さる), "k" (来る) — or ""
+// when the base is not a verb in the tables.
+//
+// It exists so that a caller holding its own class annotation can check the two
+// against each other instead of drifting apart: the lexicon typed 帰る as
+// ichidan, which is what generated 帰た and 帰ます for a godan る verb.
+func JAClass(base string) string {
+	for _, e := range jaLex[base] {
+		if c := e.feats["cj"]; c != "" {
+			return c
+		}
+	}
+	return ""
+}
+
+func JAConjugations(base string) []string {
+	if base == "" {
+		return nil
+	}
+	return sortedJAKeys(jaConjByBase[base])
+}
 
 // AnalyzeJA runs the Japanese morphological analyzer and returns the lattice.
 //
@@ -865,6 +1193,12 @@ type jaInfl struct {
 	base  string
 	feats map[string]string
 	note  string
+	// grounded records that the reconstructed base is a lexicon entry. Every
+	// reading the forward conjugation index produces is grounded by
+	// construction; the する-compound rule is the one that can propose a base
+	// the tables never listed (勉強します → 勉強する), and that reading keeps
+	// the unresolved mark of plan.md §25 step 6.
+	grounded bool
 }
 
 func (a *jaAnalyzer) jaDeinflectCands(pos int, out []*jaCand) []*jaCand {
@@ -918,7 +1252,9 @@ func (a *jaAnalyzer) jaInflections(s string) []jaInfl {
 	// 渡った finds 渡+った → 渡す with no guesswork about okurigana.
 	if readings, ok := jaConj[s]; ok {
 		for _, r := range readings {
-			out = append(out, jaInfl{base: r.base, feats: r.feats, note: r.note})
+			// Every key of the conjugation index was generated from a lexicon
+			// base, so these readings are grounded by construction.
+			out = append(out, jaInfl{base: r.base, feats: r.feats, note: r.note, grounded: true})
 		}
 	}
 	// する-class: the stem keeps its し, so 学習します resolves to 学習する.
@@ -934,6 +1270,9 @@ func (a *jaAnalyzer) jaInflections(s string) []jaInfl {
 			base:  prefix + "する",
 			feats: fm.feats,
 			note:  "suru-class: " + fm.note,
+			// 勉強します proposes 勉強する, which is not a table entry: the
+			// noun 勉強 is what the analyzer actually grounded on.
+			grounded: len(jaLex[prefix+"する"]) > 0,
 		})
 	}
 	// い-adjectives.
@@ -943,7 +1282,11 @@ func (a *jaAnalyzer) jaInflections(s string) []jaInfl {
 		}
 		stem := s[:len(s)-len(fm.sfx)]
 		if base, ok := jaAdjIStems[stem]; ok {
-			out = append(out, jaInfl{base: base, feats: fm.feats, note: "i-adjective: " + fm.note})
+			out = append(out, jaInfl{
+				base: base, feats: fm.feats,
+				note:     "i-adjective: " + fm.note,
+				grounded: true,
+			})
 		}
 	}
 	for _, ir := range jaAdjIrregular {
@@ -955,7 +1298,9 @@ func (a *jaAnalyzer) jaInflections(s string) []jaInfl {
 				continue
 			}
 			out = append(out, jaInfl{
-				base: ir.base, feats: fm.feats, note: "i-adjective (irregular): " + fm.note,
+				base: ir.base, feats: fm.feats,
+				note:     "i-adjective (irregular): " + fm.note,
+				grounded: true,
 			})
 		}
 	}
@@ -967,7 +1312,9 @@ func (a *jaAnalyzer) jaInflections(s string) []jaInfl {
 		stem := s[:len(s)-len(fm.sfx)]
 		if a.jaIsAdjNa(stem) {
 			out = append(out, jaInfl{
-				base: stem, feats: fm.feats, note: "na-adjective: " + fm.note,
+				base: stem, feats: fm.feats,
+				note:     "na-adjective: " + fm.note,
+				grounded: true,
 			})
 		}
 	}
@@ -985,12 +1332,17 @@ func (a *jaAnalyzer) jaInflMorph(i, j int, surface string, infl jaInfl) *forest.
 		Start:   a.start(i),
 		End:     a.end(j),
 		Feats:   jaCopyFeats(e.feats),
-		// Dict records that the base was found in the lexicon; Unknown records
-		// that the surface itself was reconstructed by rule. Both matter: the
-		// first says the word is known, the second says it was not found as
-		// written (plan.md §25 step 2).
-		Dict:    true,
-		Unknown: true,
+		// Dict says the reconstructed base was actually found in the lexicon,
+		// which is the case for every reading that comes out of the forward
+		// conjugation index: 飲みました → 飲む, so it is a resolved word.
+		// Unknown is reserved by plan.md §25 for an expression that survived
+		// *every* decomposition attempt, so it must stay false here unless the
+		// base itself is absent from the lexicon — which is exactly what the
+		// する-compound rule can produce (勉強します → 勉強する is not a table
+		// entry; only 勉強 is). Flagging those keeps the record meaningful
+		// instead of drowning it in correctly de-inflected verbs.
+		Dict:    infl.grounded,
+		Unknown: !infl.grounded,
 	}
 	for k, v := range infl.feats {
 		m.Feats[k] = v
@@ -1431,6 +1783,17 @@ func (a *jaAnalyzer) jaFallbackCands(pos int, out []*jaCand) []*jaCand {
 		!jaIsASCIISpace(a.runes[pos+l]) && !a.jaKnownStart(pos+l) {
 		l++
 	}
+	// A katakana loanword is one word whatever the dictionary happens to
+	// contain inside it: ビール must not become ビ + ール because some entry
+	// starts at ル. The run therefore covers the whole katakana span. It is
+	// still an UNKNOWN morpheme, just an honest single one (plan.md §25 step 1),
+	// and a dictionary hit on the same span still wins because it scores far
+	// higher.
+	if l > 0 && jaIsKatakanaRune(a.runes[pos]) {
+		for l < jaMaxUnknownRunes && pos+l < a.n && jaIsKatakanaRune(a.runes[pos+l]) {
+			l++
+		}
+	}
 	if l == 0 {
 		l = 1
 	}
@@ -1541,6 +1904,13 @@ func jaIsASCIISpace(r rune) bool {
 
 func jaIsKanjiRune(r rune) bool {
 	return (r >= 0x4E00 && r <= 0x9FFF) || (r >= 0x3400 && r <= 0x4DBF)
+}
+
+// jaIsKatakanaRune covers the katakana block plus ー, the katakana-hiragana
+// prolonged-sound mark. ー belongs to the katakana word it prolongs and is
+// never a morpheme on its own: it is the vowel of ビール, not punctuation.
+func jaIsKatakanaRune(r rune) bool {
+	return (r >= 0x30A1 && r <= 0x30FA) || (r >= 0x30FC && r <= 0x30FF)
 }
 
 func jaDedupeStrings(in []string) []string {

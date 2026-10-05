@@ -144,7 +144,7 @@
     { key: 'DOCUMENT_STATE_UPDATE', label: 'DOCUMENT STATE', kind: 'context' },
     { key: 'INPUT_NORMALIZATION', label: 'INPUT NORMALIZATION' },
     { key: 'MORPHOLOGICAL_LATTICE', label: 'MORPHOLOGICAL LATTICE' },
-    { key: 'PACKED_SYNTAX_TIC_FOREST', label: 'PACKED SYNTACTIC FOREST' },
+    { key: 'PACKED_SYNTACTIC_FOREST', label: 'PACKED SYNTACTIC FOREST' },
     { key: 'SOURCE_SEMANTIC_FOREST', label: 'SOURCE SEMANTIC FOREST' },
     { key: 'JLIR_CORE', label: 'JLIR CORE' },
     { key: 'JEV_DECISION_GRAPH', label: 'JEV DECISION GRAPH' },
@@ -206,7 +206,7 @@
   /* Notes attached to the stages that explain a failure, for the "why there is
    * no output" block. Ordered so the earliest structural problem reads first. */
   var WHY_STAGES = [
-    'INPUT_NORMALIZATION', 'MORPHOLOGICAL_LATTICE', 'PACKED_SYNTAX_TIC_FOREST',
+    'INPUT_NORMALIZATION', 'MORPHOLOGICAL_LATTICE', 'PACKED_SYNTACTIC_FOREST',
     'SOURCE_SEMANTIC_FOREST', 'JLIR_CORE', 'JEV_DECISION_GRAPH',
     'CONSTRAINED_JLIR_STATE', 'PACKED_REALIZATION_FOREST',
     'GRAMMATICAL_REALIZER', 'SEMANTIC_EQUIVALENCE_VERIFIER', 'JEV_RERANKER',

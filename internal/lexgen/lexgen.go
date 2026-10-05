@@ -17,8 +17,10 @@ package lexgen
 import (
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico/jev-trans/internal/lex"
 )
 
 // Lexicalizer resolves target-language surfaces.
@@ -32,6 +34,13 @@ type Lexicalizer struct {
 
 	jPronoun map[string]string // ja pronoun -> en pronoun
 	ePronoun map[string]string // en pronoun (lower case) -> ja pronoun
+
+	// collisions lists the English lexemes that more than one Japanese word
+	// maps to (friend → 友 / 友達). The EN → JP direction has to pick one of
+	// them, and the fact that this is a choice belongs in the coverage numbers
+	// rather than in a comment claiming the tables are "symmetric by
+	// construction". They were not.
+	collisions []string
 }
 
 // Default returns the built-in lexicalizer.
@@ -44,16 +53,31 @@ func Default() *Lexicalizer {
 		jPronoun: jaPronouns,
 		ePronoun: enPronouns,
 	}
-	// The tables are symmetric by construction: an English lexeme and its
-	// Japanese counterpart are one entry seen from the other side, not a second
-	// translation. Inverting them here is what lets EN -> JP project "book" as
-	// 本 without a hand-maintained second table that could drift. The first
-	// mapping wins on a collision, so the direction is deterministic.
+	// EN -> JA is the reverse of the same table, inverted here rather than
+	// hand-maintained a second time. The inversion is NOT lossless: six English
+	// lexemes are shared by two Japanese words (friend is both 友 and 友達, bag
+	// both 鞄 and 袋, and so on), and a plain first-wins inversion made one of
+	// each pair unreachable from EN -> JA without saying so.
+	//
+	// So the inversion is explicit about its lossy step: every collision is
+	// recorded, and enNounOverrides names which Japanese word each shared
+	// English lexeme projects to. The rule is "the more idiomatic word wins",
+	// and the alternative stays reachable from JA -> EN, so nothing is lost in
+	// the direction it is actually written in.
 	l.enNoun = make(map[string]string, len(jaNouns))
+	byEnglish := make(map[string][]string, len(jaNouns))
 	for _, ja := range sortedKeys(jaNouns) {
-		if _, taken := l.enNoun[jaNouns[ja]]; !taken {
-			l.enNoun[jaNouns[ja]] = ja
+		byEnglish[jaNouns[ja]] = append(byEnglish[jaNouns[ja]], ja)
+	}
+	for _, en := range sortedKeys(byEnglish) {
+		ja := byEnglish[en][0]
+		if len(byEnglish[en]) > 1 {
+			l.collisions = append(l.collisions, en)
+			if override, ok := enNounOverrides[en]; ok {
+				ja = override
+			}
 		}
+		l.enNoun[en] = ja
 	}
 	l.enName = make(map[string]string, len(jaNames))
 	for _, ja := range sortedKeys(jaNames) {
@@ -64,8 +88,18 @@ func Default() *Lexicalizer {
 	return l
 }
 
+// Collisions returns the English lexemes that more than one Japanese word
+// translates to, sorted. Each is a place where the EN -> JA direction had to
+// choose, which the coverage report makes visible rather than silent.
+func (l *Lexicalizer) Collisions() []string {
+	if l == nil {
+		return nil
+	}
+	return append([]string(nil), l.collisions...)
+}
+
 // sortedKeys gives the deterministic iteration order the inversion needs.
-func sortedKeys(m map[string]string) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
@@ -83,10 +117,6 @@ func (l *Lexicalizer) Form(surface string, src, tgt lang.Lang, typ string, prope
 	surface = strings.TrimSpace(surface)
 	if surface == "" {
 		return "", false
-	}
-	// An identical-script surface needs no work.
-	if tgt == lang.JA || (src == lang.JA && tgt == lang.EN) {
-		// handled below
 	}
 	if src == tgt {
 		return surface, true
@@ -201,6 +231,57 @@ func (l *Lexicalizer) Has(surface string) bool {
 	return false
 }
 
+// Validate reports every Japanese key that the analyzer cannot produce.
+//
+// The package promises that Form returns a grounded surface or nothing at all.
+// A key the morph layer cannot reach breaks that promise in the worst possible
+// way: it is still returned, with ok=true, so the caller never records a
+// lexical gap. The table carried "ceipt", the Hangul "이웃" and the Simplified
+// Chinese "伙伴" this way. Keys are checked against the analyzer's own
+// dictionary, so the check cannot pass on a word that only the table knows.
+func Validate(l *Lexicalizer) error {
+	if l == nil {
+		return nil
+	}
+	var bad []string
+	for _, ja := range sortedKeys(l.nouns) {
+		if !analyzerCovers(ja) {
+			bad = append(bad, ja)
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	return &UnreachableError{Keys: bad}
+}
+
+// analyzerCovers reports whether the analyzer segments key with no unresolved
+// morpheme. A key it can only cover as UNKNOWN is exactly the case that breaks
+// Form's promise: the surface exists but nothing grounds it.
+func analyzerCovers(key string) bool {
+	best := lex.AnalyzeJA(key).Best()
+	if len(best.Morphs) == 0 {
+		return false
+	}
+	// Every rune must be accounted for by a morpheme the analyzer resolved.
+	covered := 0
+	for _, m := range best.Morphs {
+		if m.Unknown {
+			return false
+		}
+		covered += utf8.RuneCountInString(m.Surface)
+	}
+	return covered == utf8.RuneCountInString(key)
+}
+
+// UnreachableError lists Japanese keys the analyzer cannot produce.
+type UnreachableError struct{ Keys []string }
+
+func (e *UnreachableError) Error() string {
+	return "lexgen: these Japanese keys are unreachable from the analyzer: " +
+		strings.Join(e.Keys, ", ")
+}
+
 // Stats reports coverage for the UI.
 func Stats(l *Lexicalizer) map[string]int {
 	if l == nil {
@@ -211,5 +292,14 @@ func Stats(l *Lexicalizer) map[string]int {
 		"japaneseNames":     len(l.names),
 		"identityTerms":     len(l.terms),
 		"katakanaFragments": len(l.roman),
+		// The derived EN -> JA tables are listed too: they are half the
+		// resolution surface, and omitting them is what let six dropped
+		// noun mappings go unnoticed.
+		"englishNouns": len(l.enNoun),
+		"englishNames": len(l.enName),
+		// nounCollisions counts the English lexemes two Japanese words share.
+		// It is not an error, but it is the honest measure of how much the
+		// reverse direction had to choose.
+		"nounCollisions": len(l.collisions),
 	}
 }

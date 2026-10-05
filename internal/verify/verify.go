@@ -54,7 +54,19 @@ const (
 	SeveritySoft = "soft"
 )
 
-// Status values of plan.md §61.
+// Status values of plan.md §61, plus the one §61 has no name for.
+//
+// The §61 vocabulary is a ladder of *quality*: EXACT, GOOD and LOSSY all
+// describe translations that were produced and are being graded. UNSUPPORTED,
+// UNDERDETERMINED and UNPARSABLE describe answers where the system is telling
+// the reader it does not have a translation it can stand behind.
+//
+// §44 adds a requirement §61 does not name: the verifier is a hard gate, and a
+// candidate whose proposition, polarity or referent changed must not reach the
+// user at all. Reporting that through LOSSY made a changed predicate
+// indistinguishable from a dropped honorific, so DIVERGENT exists as the
+// gate's own failure code: the target says something different from the
+// source. It is not a quality on the ladder and it is never shown as one.
 const (
 	StatusExact           = "EXACT"
 	StatusGood            = "GOOD"
@@ -63,10 +75,20 @@ const (
 	StatusUnderdetermined = "UNDERDETERMINED"
 	StatusUnsupported     = "UNSUPPORTED"
 	StatusUnparsable      = "UNPARSABLE"
+	// StatusDivergent is the §44 hard gate firing: at least one hard diff
+	// changed or dropped source content. hardRejected consumes it directly.
+	StatusDivergent = "DIVERGENT"
 )
 
-// Loss amounts, in units of the dimension they charge. They are the documented
-// weights loss.go's Total aggregates; a diff names which dimension it spends.
+// confidenceOverallKey is the key of the §59 headline number inside the
+// per-feature confidence map. The pipeline reads it by name, so it is part of
+// the contract.
+const confidenceOverallKey = "overall"
+
+// Loss amounts, in units of the dimension they charge: a diff names which
+// dimension it spends and by how much. Ordering across candidates is
+// componentwise (loss.go's Compare), so these numbers are never traded off
+// against each other by a formula.
 const (
 	// A dropped or invented argument changes what the sentence is about.
 	lossRoleAdded   = 0.45
@@ -104,13 +126,6 @@ const (
 	lossCausationLost  = 0.20
 )
 
-// goodThreshold is the weighted total below which a candidate with no hard diff
-// is still GOOD rather than LOSSY. It sits below the cheapest deliberate loss
-// (a dropped honorific: 0.18 pragmatic = 0.072 weighted) so that plan.md §5's
-// "loss = 0 is not required unconditionally" never silently reports a genuine
-// loss as GOOD.
-const goodThreshold = 0.05
-
 // Diff is one recorded divergence between the source and the re-parsed target.
 type Diff struct {
 	// Dimension is one of the Diff* constants.
@@ -129,12 +144,55 @@ type Diff struct {
 
 // Result is the verifier's verdict for one candidate.
 type Result struct {
-	Status      string                    `json:"status"`
-	Loss        LossVector                `json:"loss"`
+	Status string     `json:"status"`
+	Loss   LossVector `json:"loss"`
+	// Confidence is the §59 breakdown. It always carries the headline under
+	// confidenceOverallKey, derived from the per-feature entries — see
+	// OverallConfidence, which is the same function so a caller can recompute
+	// it and check the two agree.
 	Confidence  map[string]float64        `json:"confidence"`
 	Unsupported []jlir.UnsupportedFeature `json:"unsupported,omitempty"`
 	Diffs       []Diff                    `json:"diffs,omitempty"`
-	Notes       []string                  `json:"notes,omitempty"`
+	// Rejections names the rules that fired when the §44 hard gate rejected
+	// this candidate. It is populated by the verifier rather than reassembled by
+	// each caller, so the UI, the trace and rank.go all report the same rule
+	// names instead of three slightly different renderings.
+	Rejections []string `json:"rejections,omitempty"`
+	Notes      []string `json:"notes,omitempty"`
+}
+
+// OverallConfidence is the §59 headline: the translation's single confidence
+// number, derived from the per-feature breakdown rather than asserted
+// alongside it.
+//
+// §59 does not fix a formula, and plan.md's worked example (0.94 overall
+// beside subject 0.61) rules out the two obvious ones — the headline is
+// neither the weakest feature nor the unweighted mean of the four it lists.
+// Rather than guess, this is defined as a function a reader can recompute from
+// the map: the mean over every feature key the verifier reports, with the
+// per-role "role:*" keys folded into their §59 summary key "subject" rather
+// than counted again. A candidate that has lost track of one argument binding
+// is therefore reported through "subject", exactly as §59's example does, and
+// the headline is never larger than the feature breakdown it summarises.
+//
+// The function is exported so that a caller holding only Confidence can verify
+// that the stored "overall" matches the map instead of trusting it.
+func OverallConfidence(c map[string]float64) float64 {
+	if len(c) == 0 {
+		return 0
+	}
+	sum, n := 0.0, 0
+	for k, v := range c {
+		if k == confidenceOverallKey || strings.HasPrefix(k, "role:") {
+			continue
+		}
+		sum += clamp01(v)
+		n++
+	}
+	if n == 0 {
+		return 0
+	}
+	return round3(sum / float64(n))
 }
 
 // Verify compares a re-parsed target graph against the source graph, feature by
@@ -168,6 +226,7 @@ func Verify(src, tgt *jlir.Graph, srcLang, tgtLang lang.Lang) *Result {
 		v.res.Status = StatusUnparsable
 		v.note("no JLIR graph for the %s side; the candidate cannot be verified",
 			missingSide(src == nil, srcLang, tgtLang))
+		v.collectRejections(nil)
 		v.finish()
 		return v.res
 	}
@@ -196,6 +255,9 @@ func VerifyTraced(rec *trace.Recorder, src, tgt *jlir.Graph, srcLang, tgtLang la
 			sp.Note("hard diff [%s] %s: %s", d.Dimension, d.Item, d.Detail)
 		}
 	}
+	for _, r := range res.Rejections {
+		sp.Note("rejected: %s", r)
+	}
 	for _, u := range res.Unsupported {
 		sp.Note("unsupported %s=%s on %s (%s)", u.Key, u.Value, u.Owner, u.Reason)
 	}
@@ -203,11 +265,12 @@ func VerifyTraced(rec *trace.Recorder, src, tgt *jlir.Graph, srcLang, tgtLang la
 		sp.Note("%s", n)
 	}
 	sp.Label("status", res.Status)
+	sp.Label("confidence-overall", fmt.Sprintf("%.3f", res.Confidence[confidenceOverallKey]))
 	if res.Loss.Max() > 0 {
 		sp.Label("dominant-loss", res.Loss.Dominant())
 	}
 	switch res.Status {
-	case StatusUnparsable, StatusUnsupported:
+	case StatusUnparsable, StatusUnsupported, StatusDivergent:
 		sp.Status(trace.StatusError)
 	case StatusLossy, StatusUnderdetermined, StatusAmbiguous:
 		sp.Status(trace.StatusWarn)
@@ -730,11 +793,19 @@ func (v *verifier) compareBoundEntity(role, item string, se *jlir.Entity, ta jli
 		TargetZero:     isZeroEntity(te),
 		SourceGender:   genderOf(se),
 		ReferentUnique: referentUnique(te),
-		Role:           role,
+		// The §42 realization classes may only license a surface change once
+		// this says the referent itself survived. A zero form bound to the
+		// wrong entity is a different sentence, not a stylistic variant, and
+		// treating it as one used to charge a referent swap 0.06 stylistic
+		// instead of lossReferentSwap, because EC1 fires for every role the
+		// moment the target language is Japanese.
+		ReferentAligned: v.referentAligned(se, te),
+		Role:            role,
 	}
 
 	if ok, id := Equivalent(coref); ok {
-		// Referent identity is preserved, so this costs style only.
+		// A §42 class fired, which now means the referent was checked first
+		// and held. Only the realization changed, so this costs style only.
 		v.add(soft(DiffCoreference, item, coref.Source, coref.Target,
 			"equivalence class "+string(id)+": realization change preserves the referent"),
 			DimStylistic, lossZeroRealization, DiffPragmatics)
@@ -1153,15 +1224,30 @@ func unresolvedRef(g *jlir.Graph) int {
 	return n
 }
 
-// deriveStatus computes the verdict of plan.md §61. The precedence matters: an
-// unsupported assertion is reported as UNSUPPORTED even though it is also a hard
-// diff, because the actionable question is "where did this information come
-// from", not "how large is the loss".
+// deriveStatus computes the verdict of plan.md §61, plus the §44 hard-gate
+// failure code DIVERGENT. The precedence matters: an unsupported assertion is
+// reported as UNSUPPORTED even though it is also a hard diff, because the
+// actionable question is "where did this information come from", not "how
+// large is the loss".
+//
+// A hard diff no longer degrades to LOSSY. LOSSY is §61's word for a
+// translation that was produced and gave something up; a dropped argument, a
+// flipped polarity or a swapped referent is not that, it is a failed gate, and
+// a caller cannot act on "LOSSY, 0.05 weighted" when the truth is "the
+// predicate changed". The two are now distinguishable, and the rejection
+// reasons say which rule fired.
+//
+// GOOD is decided componentwise rather than against a scalar threshold. A
+// weighted threshold has to pick a number that trades a dropped honorific
+// against a renamed role, and no number does that honestly; §43 says the
+// dimensions are not commensurable and §42 says a realization preference is
+// not a defect. So the only loss that cannot make a candidate LOSSY is
+// stylistic loss, and every other dimension reaching any value is a real loss.
 func (v *verifier) deriveStatus() {
-	hardCount := 0
+	var hardDiffs []Diff
 	for _, d := range v.res.Diffs {
 		if d.Severity == SeverityHard {
-			hardCount++
+			hardDiffs = append(hardDiffs, d)
 		}
 	}
 
@@ -1170,24 +1256,60 @@ func (v *verifier) deriveStatus() {
 		v.res.Status = StatusUnsupported
 	case v.underdetermined:
 		v.res.Status = StatusUnderdetermined
-	case hardCount > 0:
-		v.res.Status = StatusLossy
+	case len(hardDiffs) > 0:
+		v.res.Status = StatusDivergent
 	case len(v.res.Diffs) == 0 && v.res.Loss.IsZero():
 		v.res.Status = StatusExact
 	case v.ambiguous:
 		v.res.Status = StatusAmbiguous
-	case v.res.Loss.Total() <= goodThreshold:
+	case v.res.Loss.MaxOutside(DimStylistic) <= 0:
 		v.res.Status = StatusGood
 	default:
 		v.res.Status = StatusLossy
 	}
+
+	v.collectRejections(hardDiffs)
 }
 
-// finish copies the accumulated per-feature confidence into the result.
+// collectRejections names the rules the §44 gate fired on, so the caller can
+// report *which* rule rejected a candidate rather than re-deriving the answer
+// from the diff list and calling that a reason. The rules are sorted because a
+// diff list is built in comparison order and two runs must not disagree about
+// the wording of a rejection.
+func (v *verifier) collectRejections(hardDiffs []Diff) {
+	for _, u := range v.res.Unsupported {
+		v.res.Rejections = append(v.res.Rejections,
+			fmt.Sprintf("UNSUPPORTED: the target asserts %s=%s on %s with no upstream provenance",
+				u.Key, u.Value, u.Owner))
+	}
+	switch v.res.Status {
+	case StatusUnparsable:
+		v.res.Rejections = append(v.res.Rejections,
+			"UNPARSABLE: the target sentence could not be re-parsed")
+	case StatusUnderdetermined:
+		v.res.Rejections = append(v.res.Rejections,
+			"UNDERDETERMINED: the target needs a distinction the source cannot supply")
+	}
+	for _, d := range hardDiffs {
+		v.res.Rejections = append(v.res.Rejections,
+			fmt.Sprintf("hard diff [%s] %s: %s", d.Dimension, d.Item, d.Detail))
+	}
+	sort.Strings(v.res.Rejections)
+}
+
+// finish copies the accumulated per-feature confidence into the result and
+// derives the §59 headline from it.
+//
+// The headline is written last, from the map that was just written, so it
+// cannot disagree with the breakdown it summarises: it is literally the mean of
+// the numbers sitting next to it. Deriving it here rather than leaving the key
+// unset is what stops a caller from falling back to 1 - Loss.Total() and
+// publishing the complement of the ranking key as a confidence.
 func (v *verifier) finish() {
 	for k, c := range v.conf {
 		v.res.Confidence[k] = round3(clamp01(c))
 	}
+	v.res.Confidence[confidenceOverallKey] = OverallConfidence(v.res.Confidence)
 	sort.Strings(v.res.Notes)
 }
 
@@ -1201,17 +1323,22 @@ func entityOvert(e *jlir.Entity, l lang.Lang) bool {
 	return strings.TrimSpace(e.Alias(l)) != ""
 }
 
-// isZeroEntity reports whether e is an unrealized placeholder. A zero anaphor is
-// an Entity with a Referent distribution (plan.md §15), not a missing node, so
-// the test must accept the flag, the distribution, and an explicit zero alias.
+// isZeroEntity reports whether e has no surface realization at all.
+//
+// plan.md §15 models zero anaphora as an Entity carrying a Referent
+// distribution, so "it has a referent" is *not* the test — that would make any
+// entity with a referent distribution report as SourceZero/TargetZero, and
+// SourceZero/TargetZero is the pair that waives referent checking in the §42
+// equivalence classes. The three accepted markers below are the three ways the
+// graph actually says "this entity was never written down": the explicit Zero
+// flag, and an alias of kind "zero". An entity that has an overt alias is
+// overt even if it also carries a referent distribution, which is what
+// entityOvert then reports to the caller.
 func isZeroEntity(e *jlir.Entity) bool {
 	if e == nil {
 		return true
 	}
 	if e.Zero {
-		return true
-	}
-	if e.Referent != nil {
 		return true
 	}
 	for _, a := range e.Aliases {
@@ -1240,11 +1367,21 @@ func referentUnique(e *jlir.Entity) bool {
 // identity keys come first; a positional fallback covers the case where the
 // pipeline aligned two translations of one sentence without carrying a
 // cross-lingual key into the target identity field.
+//
+// Node ids are *not* evidence. sg is the source sentence's graph and tg is a
+// fresh parse of the target sentence, so both number their entities e1, e2, …
+// independently: id equality said "the first entity of one sentence is the
+// first entity of the other", which is true of every sentence pair and says
+// nothing about referents. It also made the whole check vacuous for the first
+// N entities of every pair, which is how a target that bound 太郎 where the
+// source bound 花子 could be waved through as if the referent had been
+// checked. Identity now comes from the canonical keys, and only from the
+// positional fallback when there are no keys on either side to compare.
 func sameReferent(sg, tg *jlir.Graph, se, te *jlir.Entity) bool {
 	if se == nil || te == nil {
 		return se == nil && te == nil
 	}
-	if se.ID == te.ID {
+	if se == te {
 		return true
 	}
 	keys := entityKeys(sg, se)
@@ -1258,6 +1395,55 @@ func sameReferent(sg, tg *jlir.Graph, se, te *jlir.Entity) bool {
 		return false
 	}
 	return positionIndex(sg, se) == positionIndex(tg, te)
+}
+
+// referentUnknown is the escape option of a zero anaphor's referent
+// distribution. It is the option that says "we do not know", so it can never
+// establish that a referent was preserved.
+const referentUnknown = "UNKNOWN"
+
+// referentAligned reports whether the target entity denotes the referent the
+// source entity denoted. It is the precondition the §42 realization classes
+// (EC1, EC2) need before they may license a surface change.
+//
+// A zero anaphor names its referent through a distribution over *this graph's*
+// entity ids rather than through an alias, so the check has to follow the
+// referent decision: if the placeholder is committed, the entity it names is
+// the one to compare. Without this step every overt source referent realized
+// as a Japanese zero looked "equivalent" to the classes and the identity check
+// downstream was never reached.
+//
+// An uncommitted distribution answers false. That is the honest answer — the
+// system has not decided which entity the zero denotes, so it cannot certify
+// that the referent survived — and it routes the pair to the
+// UNDERDETERMINED branch of compareBoundEntity, which is what §61 prescribes.
+func (v *verifier) referentAligned(se, te *jlir.Entity) bool {
+	if sameReferent(v.src, v.tgt, se, te) {
+		return true
+	}
+	if se == nil || te == nil || te.Referent == nil {
+		return false
+	}
+	winner := te.Referent.Winner
+	if winner == "" {
+		if !referentUnique(te) {
+			return false
+		}
+		for opt, p := range te.Referent.Prob {
+			if p > 0.01 {
+				winner = opt
+				break
+			}
+		}
+	}
+	if winner == "" || winner == referentUnknown {
+		return false
+	}
+	bound := v.tgt.Entity(jlir.ID(winner))
+	if bound == nil {
+		return false
+	}
+	return sameReferent(v.src, v.tgt, se, bound)
 }
 
 // entityKeys returns the canonical identity keys of e: its own identity, its

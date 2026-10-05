@@ -10,11 +10,17 @@ package verify
 // would be checking its own intentions against itself, which is exactly the
 // failure mode plan.md §40 names as the core safety device.
 //
-// The rule that matters here: if a generated target sentence cannot be parsed,
-// Reparse returns nil. It never repairs, never guesses and never falls back to
-// the source analysis, because a guessed JLIR_target would make the verifier
-// report "no difference found" for a sentence the system does not actually
-// understand.
+// Two rules matter here.
+//
+// First, if a generated target sentence cannot be parsed, Reparse returns nil.
+// It never repairs, never guesses and never falls back to the source analysis,
+// because a guessed JLIR_target would make the verifier report "no difference
+// found" for a sentence the system does not actually understand.
+//
+// Second, this file owns the analyze-and-compose path outright. It used to sit
+// next to a line-for-line restatement in internal/semantics, and two copies of
+// the same four stages is how they drift apart: one of them grew a recover and
+// the other did not. There is one now, and it is here.
 
 import (
 	"strings"
@@ -24,49 +30,18 @@ import (
 	"github.com/nico/jev-trans/internal/lex"
 	"github.com/nico/jev-trans/internal/semantics"
 	"github.com/nico/jev-trans/internal/syntax"
-	"github.com/nico/jev-trans/internal/trace"
 )
 
-// Reparse runs the full source pipeline — analysis, morphology, parse, semantic
-// composition — over an already-realized target string and returns the JLIR
-// graph of that string. It returns nil when the string carries no propositional
-// content the pipeline can account for, so the caller reports UNPARSABLE.
-func Reparse(text string, l lang.Lang) *jlir.Graph {
-	return ReparseTraced(nil, text, l)
-}
-
-// ReparseTraced is Reparse with the trace spans that make the loop visible in
-// the WebUI. The re-parse is the second half of the safety device, so the UI
-// must show it running and must show why a candidate was declared unparsable.
-func ReparseTraced(rec *trace.Recorder, text string, l lang.Lang) *jlir.Graph {
-	var sp *trace.Span
-	if rec != nil {
-		sp = rec.Open(trace.StageReparse, "target re-parse")
-		defer sp.Close()
-	}
-
-	graph := build(text, l)
-
-	if rec != nil {
-		switch {
-		case graph == nil:
-			sp.Note("no propositional content recovered; the candidate is UNPARSABLE")
-		default:
-			sp.Data(graph)
-			sp.Count("events", len(graph.Events))
-			sp.Count("entities", len(graph.Entities))
-			if n := len(graph.Unresolved()); n > 0 {
-				sp.Note("%d unresolved node(s) survived analysis", n)
-				sp.Count("unresolved", n)
-			}
-		}
-	}
-	return graph
-}
-
-// build performs the four pipeline stages over text. It is separate from
-// ReparseTraced so that the trace policy stays in one place.
-func build(text string, l lang.Lang) *jlir.Graph {
+// Reparse runs the full source pipeline — morphological analysis, parsing,
+// semantic composition — over an already-realized target string and returns the
+// JLIR graph of that string. It returns nil when the string carries no
+// propositional content the pipeline can account for, and when any stage
+// panics, so the caller reports UNPARSABLE in both cases.
+//
+// The caller owns the trace span for this stage. This function is deliberately
+// trace-free so a re-parse never opens a second span behind the caller's back,
+// the same discipline RankWith follows.
+func Reparse(text string, l lang.Lang) (g *jlir.Graph) {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
@@ -75,6 +50,19 @@ func build(text string, l lang.Lang) *jlir.Graph {
 		// a convenience for the CLI only, never a silent pipeline decision.
 		l = lang.DetectLang(text)
 	}
+
+	// plan.md §24: a stage failure must be survivable and observable rather
+	// than fatal. The analyzer is the least defended code in the system — it
+	// walks a lattice built from arbitrary text — and a panic inside it must
+	// cost this candidate its verification, not the whole translation. The
+	// recovered value is nil, which is exactly what "we could not re-parse this
+	// sentence" means to every caller, and the pipeline turns it into an
+	// UNPARSABLE candidate with a warning attached.
+	defer func() {
+		if r := recover(); r != nil {
+			g = nil
+		}
+	}()
 
 	bundle := analyzeAndParse(text, l)
 	if bundle == nil || len(bundle.Clauses) == 0 {
@@ -91,6 +79,9 @@ func build(text string, l lang.Lang) *jlir.Graph {
 	}
 	if graph.Lang == "" {
 		graph.Lang = l
+	}
+	if graph.Source == "" {
+		graph.Source = text
 	}
 	return graph
 }

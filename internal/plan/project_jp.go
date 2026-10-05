@@ -18,6 +18,8 @@ package plan
 // referent stays in the graph (plan.md §3).
 
 import (
+	"sort"
+
 	"strings"
 
 	"github.com/nico/jev-trans/internal/jlir"
@@ -140,6 +142,21 @@ func projectJPEvent(r Request, p *Projection, gp genderPolicy, ev *jlir.Event, d
 		}
 		if isObjectRole(role) {
 			ep.Object = np
+		}
+	}
+
+	// A Japanese clause does not lose its subject to a labelling accident.
+	// For an intransitive predicate the mover is bound as theme or patient, not
+	// as agent, so isSubjectRole never matched and the clause was realized with
+	// no subject at all: 「先生が来た」 came out as an empty predicate. When
+	// nothing claimed the subject and exactly one argument could serve as it,
+	// that argument takes the slot. Japanese and English agree on this much:
+	// one argument, one predicate, a subject.
+	if ep.Subject == nil {
+		if _, np := soleSubjectCandidate(ep); np != nil {
+			np.Particle = jpSubjectMarker(r, p, ev, np, hasEmbed)
+			np.Topic = np.Particle == Wa
+			ep.Subject = np
 		}
 	}
 
@@ -491,4 +508,60 @@ func jpSentenceFinal(r Request, g *jlir.Graph) string {
 		return "ね"
 	}
 	return ""
+}
+
+// soleSubjectCandidate returns the one argument that can serve as the clause
+// subject when no role claimed the slot.
+//
+// It is deliberately conservative: the argument must be the only non-adjunct
+// one, it must not already be bound to the object slot, and it must be one of
+// the roles that a one-argument clause is normally written around. Promoting
+// the object of a transitive clause would invert the argument structure, which
+// is a worse failure than an empty subject.
+func soleSubjectCandidate(ep *EventPlan) (string, *NPPlan) {
+	np := ep.Args[jlir.RoleAgent]
+	if np != nil {
+		return jlir.RoleAgent, np
+	}
+	np = ep.Args[jlir.RoleExperiencer]
+	if np != nil {
+		return jlir.RoleExperiencer, np
+	}
+	// Count the clause's content arguments. A clause with exactly one of them
+	// is intransitive whatever the role label says, and that argument is its
+	// subject. The earlier guard on ep.Object was wrong here: isObjectRole
+	// calls theme an object, so the single mover of 「先生が来た」 was treated as
+	// "there is already an object" and the subject stayed empty.
+	n := 0
+	var only string
+	var onlyNP *NPPlan
+	for _, role := range evRolesOf(ep) {
+		cand := ep.Args[role]
+		if cand == nil || cand.Omitted() {
+			continue
+		}
+		n++
+		only, onlyNP = role, cand
+	}
+	if n == 1 {
+		return only, onlyNP
+	}
+	return "", nil
+}
+
+// evRolesOf lists the roles an EventPlan carries arguments for, in the same
+// order the projection filled them, so the promotion is deterministic.
+func evRolesOf(ep *EventPlan) []string {
+	out := make([]string, 0, len(ep.Args))
+	for k := range ep.Args {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ri, rj := jlir.RoleRank[out[i]], jlir.RoleRank[out[j]]
+		if ri != rj {
+			return ri < rj
+		}
+		return out[i] < out[j]
+	})
+	return out
 }

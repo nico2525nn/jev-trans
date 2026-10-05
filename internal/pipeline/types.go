@@ -183,7 +183,14 @@ type Answer struct {
 
 // EngineConfig configures an Engine.
 type EngineConfig struct {
-	Jev           *jev.Client
+	Jev *jev.Client
+	// OfflineClient is used when Jev is nil. It exists so that the decision layer
+	// never has to construct a client itself: doing so read OPENCODE_API_KEY
+	// from the environment and opened live network calls inside a run whose trace
+	// reported the oracle as offline, while also discarding the decision cache
+	// on every call. A caller that wants no oracle configures an offline client
+	// here explicitly.
+	OfflineClient *jev.Client
 	MaxCandidates int
 	// MaxOracleCalls bounds the decision budget for one translation. Exceeding
 	// it degrades to priors rather than hanging the request.

@@ -76,6 +76,24 @@ type RankOutcome struct {
 
 // hardRejected reports whether a candidate fails the semantic hard gate, and
 // returns the rules that rejected it.
+//
+// This is the only place plan.md §44's gate is enforced, so it is written to be
+// unforgeable rather than clever. It rejects on three independent grounds and
+// any one of them is enough:
+//
+//   - no verification result at all — "we did not check" is not "we checked and
+//     found nothing";
+//   - a failing status (UNPARSABLE, UNSUPPORTED, DIVERGENT), each of which is
+//     the verifier already having made the gate decision;
+//   - any hard diff or unsupported feature present in the result, scanned here
+//     rather than trusted from the status.
+//
+// The third ground is redundant with the second on purpose: a caller that
+// constructs a Result by hand, or a future status added without updating this
+// switch, still cannot slip a hard-failed candidate through. The single-candidate
+// case is not special — RankOutcomeOf calls this for every candidate before it
+// looks at how many there are, so the forest pruned down to one derivation
+// fails exactly like any other.
 func hardRejected(c Candidate) (bool, []string) {
 	if c.Verify == nil {
 		return true, []string{"not verified: the semantic gate of plan.md §44 requires a verification result"}
@@ -86,7 +104,12 @@ func hardRejected(c Candidate) (bool, []string) {
 		rules = append(rules, "UNPARSABLE: the target sentence could not be re-parsed")
 	case StatusUnsupported:
 		rules = append(rules, "UNSUPPORTED: the target asserts information with no upstream provenance")
+	case StatusDivergent:
+		rules = append(rules, "DIVERGENT: the target says something different from the source (plan.md §44)")
 	}
+	// The verifier's own reasons come first: they are the rules it named, with
+	// the status-qualified wording the UI shows.
+	rules = append(rules, c.Verify.Rejections...)
 	for _, d := range c.Verify.Diffs {
 		if d.Severity == SeverityHard {
 			rules = append(rules, fmt.Sprintf("hard diff [%s] %s: %s", d.Dimension, d.Item, d.Detail))
@@ -95,24 +118,20 @@ func hardRejected(c Candidate) (bool, []string) {
 	for _, u := range c.Verify.Unsupported {
 		rules = append(rules, fmt.Sprintf("unsupported %s=%s on %s", u.Key, u.Value, u.Owner))
 	}
-	return len(rules) > 0, rules
+	if len(rules) == 0 {
+		return false, nil
+	}
+	return true, rules
 }
 
-// Rank orders the candidates that pass the hard gate, using the naturalness
-// scores already present on each candidate.
+// RankWith runs the §44 hard gate, the §45 dominance pass and the D9 rerank
+// hook over every candidate, and reports the full outcome. It is the only entry
+// point of this file: there is deliberately no shorter wrapper that skips the
+// gate, because a wrapper is exactly what made the gate optional once already.
 //
-// Hard failures are removed first: plan.md §44 makes the verifier a hard gate
-// and states plainly that a semantically wrong sentence must not be rescued by
-// naturalness. A candidate that never went through Verify is treated as failing
-// rather than as passing, so an unverified string cannot win by default.
-func Rank(cands []Candidate) []Candidate {
-	return RankOutcomeOf(cands).Ranked
-}
-
-// RankWith is Rank plus the D9 rerank hook and the trace span. score may be nil,
-// in which case the naturalness already carried by the candidates is used; that
-// is the normal path when no API key is configured and the client answers from
-// priors (plan.md §56).
+// score may be nil, in which case the naturalness already carried by the
+// candidates is used; that is the normal path when no API key is configured and
+// the client answers from priors (plan.md §56).
 func RankWith(ctx context.Context, rec *trace.Recorder, cands []Candidate, score NaturalnessFn) (*RankOutcome, error) {
 	var sp *trace.Span
 	if rec != nil {
@@ -154,8 +173,13 @@ func RankWith(ctx context.Context, rec *trace.Recorder, cands []Candidate, score
 }
 
 // RankOutcomeOf performs the hard-gate removal and the Pareto pruning and
-// returns the full report. It is the deterministic core of Rank: no oracle, no
-// trace, no randomness.
+// returns the full report. It is the deterministic core of RankWith: no oracle,
+// no trace, no randomness.
+//
+// The gate runs for every candidate before the survivor count is examined, so
+// a slice of one behaves exactly like a slice of many: when the hard
+// constraints pruned the forest down to a single derivation, that derivation
+// still has to pass hardRejected or it is reported as failing.
 func RankOutcomeOf(cands []Candidate) *RankOutcome {
 	out := &RankOutcome{}
 	var passing []Candidate
@@ -248,7 +272,7 @@ func dominates(a, b Candidate) bool {
 	// Strictness: without it, identical candidates would each delete the other.
 	strict := a.Naturalness > b.Naturalness+1e-9
 	if !strict {
-		for _, dim := range LossDimOrder {
+		for _, dim := range LossDimensionOrder() {
 			if a.Verify.Loss.Get(dim) < b.Verify.Loss.Get(dim)-1e-9 {
 				strict = true
 				break
@@ -258,10 +282,20 @@ func dominates(a, b Candidate) bool {
 	return strict
 }
 
-// sortRanked orders the shortlist. The keys are, in order: verifier status
-// severity, total loss, naturalness (descending), then the original candidate
-// order — so ties are deterministic and stable rather than dependent on map
-// iteration or on a comparator that is inconsistent for equal elements.
+// sortRanked orders the shortlist componentwise, per plan.md §43's
+// 「最終候補選択では、単一scoreではなくこのvectorを考慮する」: the keys are, in
+// order, verifier status severity, then the loss vector read dimension by
+// dimension in LossDimensionOrder, then naturalness (descending), then the
+// original candidate order. Ties are therefore deterministic and stable rather
+// than dependent on map iteration or on a comparator that is inconsistent for
+// equal elements.
+//
+// It is deliberately *not* Total: a weighted sum would let 0.25 of temporal
+// loss buy away 0.25 of propositional loss, which is exactly the trade §43
+// forbids and §45 handles with Pareto dominance instead. Dominance has already
+// run by the time this is called, so the candidates left are mutually
+// non-dominated and the componentwise comparison only has to break the ties
+// dominance deliberately left open.
 func sortRanked(cands []Candidate) []Candidate {
 	idx := map[string]int{}
 	for i, c := range cands {
@@ -276,8 +310,8 @@ func sortRanked(cands []Candidate) []Candidate {
 		if sa, sb := statusSeverity(a), statusSeverity(b); sa != sb {
 			return sa < sb
 		}
-		if la, lb := a.Verify.Loss.Total(), b.Verify.Loss.Total(); la != lb {
-			return la < lb
+		if c := a.Verify.Loss.Compare(b.Verify.Loss); c != 0 {
+			return c < 0
 		}
 		if a.Naturalness != b.Naturalness {
 			return a.Naturalness > b.Naturalness
@@ -309,7 +343,9 @@ func decorate(cands []Candidate) []Candidate {
 
 // statusSeverity orders the §61 statuses. Lower is better; the ordering is the
 // one plan.md §61 itself uses to talk about "returning something worse than
-// nothing", with EXACT best and UNPARSABLE worst.
+// nothing", with EXACT best and UNPARSABLE worst. DIVERGENT sorts with the
+// gate failures rather than on the quality ladder: it is not a quality, and a
+// candidate that reached this function with one has already been pruned.
 func statusSeverity(c Candidate) int {
 	switch c.Verify.Status {
 	case StatusExact:

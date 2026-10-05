@@ -32,11 +32,18 @@ var enFamilyLemma = map[string]string{
 }
 
 // enLemmaFor returns the English lemma of a family.
+// enLemmaFor maps a predicate family onto its English verb lemma.
+//
+// An unmapped family yields the EMPTY string, deliberately. The previous
+// fallback returned strings.ToLower(family), so the family "UNKNOWN" became
+// the verb "unknown" and the morphology layer conjugated it into "unknowns."
+// -- a non-word that the re-parser then accepted, which the verifier scored
+// EXACT. No lemma means no predicate realization, which is honest.
 func enLemmaFor(family string) string {
 	if l, ok := enFamilyLemma[family]; ok {
 		return l
 	}
-	return strings.ToLower(family)
+	return ""
 }
 
 // enAuxPhrase is a verb phrase made of an inflected auxiliary plus a literal
@@ -64,8 +71,12 @@ func enSplit(lemma string) enAuxPhrase {
 		return enAuxPhrase{aux: "", tail: "there is"}
 	case "there are":
 		return enAuxPhrase{aux: "", tail: "there are"}
-	case "is allowed to":
-		return enAuxPhrase{aux: "is", tail: " allowed to"}
+	// "be allowed to" is the lemma C.MAY.EN.02 declares. The enumerator used
+	// to carry the already-inflected "is allowed to" instead, so the multiword
+	// lemma matched nothing here and fell through to being inflected as if it
+	// were one word: "be allowed toes", "be allowed toed", "be allowed toing".
+	case "be allowed to":
+		return enAuxPhrase{aux: "be", tail: " allowed to"}
 	}
 	return enAuxPhrase{aux: "", tail: ""}
 }
@@ -210,6 +221,15 @@ func (rt *realizer) enVerbPiece(ep *EventPlan, c *Construction, depth int) []for
 	lemma := c.Lex
 	if lemma == "" {
 		lemma = enLemmaFor(c.Family)
+	}
+	if lemma == "" {
+		// No lexeme for this predicate in the target language. Emitting a
+		// placeholder would produce a sentence the verifier cannot distinguish
+		// from a real one, so the branch is refused and the gap is recorded.
+		rt.reject(string(ep.EventID), "", HardUnknownSense,
+			"no English lexeme is registered for predicate "+string(ep.EventID)+
+				"; the sentence cannot be realized", "realization")
+		return nil
 	}
 	lead, verb, tail := rt.enVerbParts(ep, c, lemma, tenseOf(ep), person, plural, negative)
 	if rt.bareVerb && verb != "" {
@@ -360,51 +380,6 @@ func baseOf(lemma string) string { return lookupEN(lemma).base }
 
 // --- English noun phrases -------------------------------------------------
 
-// enNP realizes one planned argument as an English noun phrase node, including
-// its preposition. An omitted argument produces no node at all: the absence is
-// the realization (plan.md §3).
-func (rt *realizer) enNP(np *NPPlan, slot string, ep *EventPlan, initial bool, prep string, depth int) string {
-	if np == nil || np.Omitted() {
-		return ""
-	}
-	if np.IsClause {
-		// An argument bound to an event surfaces as a clause. Whether it keeps
-		// its subject is the construction's business: a control complement has
-		// none, a bare complement does.
-		if np.Clause == nil {
-			rt.reject(slot, "", HardMissingArg, "clausal argument has no plan", "realization")
-			return ""
-		}
-		return rt.clauseNode(np.Clause, false, depth+1)
-	}
-	alts := rt.enNPAlts(np, slot, prep, initial)
-	if len(alts) == 0 {
-		return ""
-	}
-	alts = pruneSlot(slot, alts, npLoss)
-	rt.countSlot(slot, len(alts))
-	return rt.altNode("NP", alts)
-}
-
-// npLoss is the per-alternative loss used for Pareto pruning inside a slot: an
-// alternative that loses on referential or pragmatic loss without being more
-// likely is dropped.
-func npLoss(a forest.Alt) LossVector {
-	var v LossVector
-	if meta := a.Note; meta != "" {
-		switch {
-		case strings.Contains(meta, "undetermined"):
-			v.Referential += 0.2
-		case strings.Contains(meta, "zero"):
-			v.Referential += 0.1
-		}
-	}
-	if a.Probability < 0.2 {
-		v.Stylistic += 0.1
-	}
-	return v
-}
-
 // enNPAlts builds the alternatives of one English noun phrase.
 func (rt *realizer) enNPAlts(np *NPPlan, slot, prep string, initial bool) []forest.Alt {
 	var alts []forest.Alt
@@ -505,8 +480,10 @@ func (rt *realizer) enNPAlts(np *NPPlan, slot, prep string, initial bool) []fore
 			upper := capitalize(a.Lex)
 			if upper != a.Lex {
 				a.Lex = upper
-				rt.reject(slot, strings.ToLower(a.Lex), SoftDominance,
-					"an English sentence does not start with a lower case word", "realization")
+				// Not a violation: the lower case reading is a rival
+				// candidate, not an illegal branch (plan.md §37).
+				rt.note("dominated %q: an English sentence does not start with a lower case word",
+					strings.ToLower(a.Lex))
 			}
 			kept = append(kept, a)
 		}
@@ -588,11 +565,6 @@ func (rt *realizer) framesEN(ep *EventPlan, first bool, depth int) []frame {
 		for i := range parts {
 			parts[i].alts = enSpaceAlts(parts[i].alts, first && i == 0)
 		}
-		if !rt.clauseFinal {
-			// A sentence with several clauses closes each one of them.
-			parts = append(parts, piece{label: "PUNCT",
-				alts: []forest.Alt{{Lex: rt.punctuation(rt.p), Probability: 0.9, Hard: true}}})
-		}
 		parts = append(parts, rt.idPiece(c))
 		if len(parts) <= 1 {
 			continue // nothing but the id: the frame has no material
@@ -669,7 +641,7 @@ func (rt *realizer) patternEN(ep *EventPlan, c *Construction, first bool, depth 
 				role := roleOfToken(tok)
 				pre := prep
 				if pre == "" {
-					pre = rt.prepositionFor(c, role)
+					pre = enPrep(role)
 				}
 				if rt.implicitJoin(ep, c, ep.Args[role]) {
 					add(piece{label: "JOIN", alts: []forest.Alt{{Lex: "to", Probability: 0.8, Hard: true}}})
@@ -893,9 +865,6 @@ func lookupEN(lemma string) enVerb {
 	}
 }
 
-// baseOfIrregular keeps the dictionary form of an irregular verb.
-func baseOfIrregular(lemma string) string { return lookupEN(lemma).base }
-
 // syllables is a rough count used only by the doubling rule, which applies to
 // monosyllables (and to the handful of disyllabic exceptions listed below).
 func syllables(w string) int {
@@ -914,8 +883,17 @@ func syllables(w string) int {
 	return n
 }
 
-// enNoDouble lists the words the doubling rule must not touch.
+// enNoDouble lists the words whose -ed form does not double the final
+// consonant. Two groups, both learned rather than rule-governed: verbs whose
+// past is invariant ("put", "hit", "cost"), and disyllabic verbs whose stress
+// falls on the first syllable ("visit", "offer"), where the CVC spelling is not
+// the CVC sound pattern the rule describes.
 var enNoDouble = map[string]bool{
+	// invariant pasts
+	"put": true, "cut": true, "set": true, "hit": true, "cost": true,
+	"shut": true, "let": true, "quit": true, "bet": true, "cast": true,
+	"spread": true, "split": true, "shed": true, "read": true,
+	// disyllabic with first-syllable stress
 	"visit": true, "edit": true, "limit": true, "profit": true, "orbit": true,
 	"happen": true, "open": true, "offer": true, "suffer": true, "proper": true,
 	"travel": true, "cancel": true, "label": true, "model": true, "signal": true,
@@ -938,6 +916,11 @@ func isConsonant(c byte) bool {
 
 // needsDoubling applies the CVC rule: a one syllable consonant-vowel-consonant
 // ending doubles before -ed and -ing, except after w, x and y.
+//
+// The guard used to require isConsonant(a) and then return false when
+// isConsonant(a), so it was false for every input and no English verb doubled:
+// pastTense("drop") was "droped" and ingOfBase("nod") was "noding". Only the
+// hand-written irregular table hid the defect for the verbs it lists.
 func needsDoubling(w string) bool {
 	l := strings.ToLower(w)
 	if len(l) < 3 || enNoDouble[l] {
@@ -947,15 +930,14 @@ func needsDoubling(w string) bool {
 		return false
 	}
 	a, b, c := l[len(l)-3], l[len(l)-2], l[len(l)-1]
-	if !isVowel(b) || !isConsonant(c) || !isConsonant(a) {
+	// CVC: a consonant, a vowel, then a final consonant that is not w, x or y.
+	// A final "w", "x" or "y" is already a glide or a sibilant and never
+	// doubles: "saw", "box", "play".
+	if !isConsonant(a) || !isVowel(b) || !isConsonant(c) {
 		return false
 	}
 	switch c {
 	case 'w', 'x', 'y':
-		return false
-	}
-	// Two consonants in a row at the end ("stomp") are already closed.
-	if isConsonant(a) {
 		return false
 	}
 	return true
@@ -1027,9 +1009,27 @@ func ingOfBase(base string) string {
 // ingForm returns the -ing form.
 func ingForm(lemma string) string { return lookupEN(lemma).prog }
 
-// pluralize returns the plural of an English noun, honouring the same sibilant
-// and y rules as the verb inflection plus the irregular nouns the system cannot
-// do without.
+// enNounPlural is the noun lexicon the plural rule consults before doing any
+// morphology. These plurals are lexical facts: man does not take -s whatever its
+// ending, and no suffix rule produces "men". Keeping the table here rather than
+// inside pluralize keeps the morphology function a morphology function.
+//
+// The -f entries are the only English nouns that take -ves. It is not a rule:
+// the final -f of roof, chief and belief stays, while the final -f of half,
+// wolf and self becomes -ves, and both sets are spelled alike.
+var enNounPlural = map[string]string{
+	"man": "men", "woman": "women", "child": "children",
+	"person": "people", "foot": "feet", "tooth": "teeth",
+	"mouse": "mice", "goose": "geese", "ox": "oxen",
+	"this": "these", "it": "they", "that": "those",
+	"half": "halves", "calf": "calves", "self": "selves",
+	"wolf": "wolves", "shelf": "shelves", "thief": "thieves",
+	"knife": "knives", "wife": "wives", "life": "lives",
+	"leaf": "leaves", "loaf": "loaves",
+}
+
+// pluralize returns the plural of an English noun. The lexical table is
+// consulted first; everything else follows the regular rules.
 func pluralize(noun, number string) string {
 	if noun == "" {
 		return ""
@@ -1037,25 +1037,12 @@ func pluralize(noun, number string) string {
 	if number != jlir.NumberPlural {
 		return noun
 	}
-	switch strings.ToLower(noun) {
-	case "man":
-		return "men"
-	case "woman":
-		return "women"
-	case "child":
-		return "children"
-	case "person":
-		return "people"
-	case "foot":
-		return "feet"
-	case "tooth":
-		return "teeth"
-	case "mouse":
-		return "mice"
-	case "this":
-		return "these"
-	case "it":
-		return "they"
+	if p, ok := enNounPlural[strings.ToLower(noun)]; ok {
+		// Preserve the input's capitalization for the pronouns.
+		if noun[0] >= 'A' && noun[0] <= 'Z' {
+			return strings.ToUpper(p[:1]) + p[1:]
+		}
+		return p
 	}
 	l := strings.ToLower(noun)
 	switch {
@@ -1064,8 +1051,6 @@ func pluralize(noun, number string) string {
 		return noun + "es"
 	case strings.HasSuffix(l, "y") && len(l) > 1 && !isVowel(l[len(l)-2]):
 		return noun[:len(noun)-1] + "ies"
-	case strings.HasSuffix(l, "f"):
-		return noun[:len(noun)-1] + "ves"
 	}
 	return noun + "s"
 }

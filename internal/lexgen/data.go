@@ -8,14 +8,26 @@ import "github.com/nico/jev-trans/internal/lang"
 // The list is explicit rather than generated, and that is the point: a word the
 // table does not cover surfaces as "no English lexeme known" and becomes a
 // visible lexical gap, rather than a fluent-looking mistranslation.
+//
+// Every key must be a Japanese surface the analyzer can actually produce. The
+// table once carried "ceipt" (a truncated Latin key), the Hangul "이웃" and
+// the Simplified Chinese "伙伴"; none can be produced by the morph layer, and
+// Form("receipt", en, ja) duly returned the string "ceipt" with ok=true, which
+// is worse than a gap because the caller believes it. Validate reports every
+// key the analyzer cannot reach.
+//
+// 男 and 女 were dropped for the same reason from the other side: they are
+// bound morphemes in ordinary use (彼女, 男性, 男女), and listing them as bare
+// nouns made the analyzer split 彼女 into 彼 + 女, which cost more than the two
+// lexemes were worth.
 var jaNouns = map[string]string{
 	// people and roles
-	"人": "person", "男": "man", "女": "woman", "子供": "child", "子ども": "child",
+	"人": "person", "子供": "child", "子ども": "child",
 	"友": "friend", "友達": "friend", "家族": "family", "母": "mother", "父": "father",
 	"兄": "brother", "姉": "sister", "弟": "brother", "妹": "sister",
 	"先生": "teacher", "学生": "student", "生徒": "student", "社員": "employee",
 	"医者": "doctor", "研究者": "researcher", "教授": "professor", "部長": "department head",
-	" 이웃": "neighbor", "客": "customer", "伙伴": "partner", "同僚": "colleague",
+	"客": "customer", "同僚": "colleague",
 	// animals
 	"猫": "cat", "犬": "dog", "鳥": "bird", "魚": "fish", "馬": "horse",
 	"牛": "cow", "虫": "insect", "動物": "animal",
@@ -38,7 +50,7 @@ var jaNouns = map[string]string{
 	"地図": "map", "音楽": "music", "映画": "film", "絵": "picture",
 	"電話": "telephone", "パソコン": "computer", "機械": "machine",
 	"カメラ": "camera", "窓": "window", "扉": "door", "水": "water",
-	"箱": "box", "袋": "bag", "切符": "ticket", "ceipt": "receipt",
+	"箱": "box", "袋": "bag", "切符": "ticket",
 	// food and drink
 	"ご飯": "meal", "米": "rice", "パン": "bread", "肉": "meat",
 	"野菜": "vegetable", "果物": "fruit", "茶": "tea", "コーヒー": "coffee",
@@ -64,6 +76,23 @@ var jaNouns = map[string]string{
 	// events
 	"旅": "trip", "旅行": "travel", "ニュース": "news", "式典": "ceremony",
 	"音楽会": "concert", "体育": "physical education",
+}
+
+// enNounOverrides names which Japanese word a shared English lexeme should
+// project to when the inversion cannot decide on its own.
+//
+// Six English nouns in jaNouns are translated by two different Japanese words.
+// The inversion sorts the Japanese keys and takes the first, which picked 友 over
+// 友達 and 弟 over 兄 — never the word an English "friend" or "brother" should
+// become. The override states the idiomatic choice; the losing word is still
+// reachable from JA -> EN, so nothing is lost in the direction it is written in.
+var enNounOverrides = map[string]string{
+	"friend":  "友達", // over 友
+	"sister":  "姉",  // over 妹
+	"child":   "子供", // over 子ども
+	"brother": "兄",  // over 弟
+	"student": "生徒", // over 学生
+	"bag":     "鞄",  // over 袋
 }
 
 // jaNames maps Japanese proper names onto the romanization the system is
@@ -132,7 +161,7 @@ var enPronouns = map[string]string{
 	"this": "これ", "that": "それ", "these": "これら", "those": "それら",
 	"someone": "誰か", "anyone": "誰か", "everyone": "皆", "nobody": "誰も",
 	"something": "何か", "anything": "何か", "everything": "すべて", "nothing": "何も",
-	"here": "ここ", "there": "そこ", "now": "今", "then": "then",
+	"here": "ここ", "there": "そこ", "now": "今", "then": "それから",
 }
 
 // katakanaRomaji turns katakana into romaji fragments, so a katakana name the

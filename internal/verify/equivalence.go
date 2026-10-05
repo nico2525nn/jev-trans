@@ -80,8 +80,21 @@ type Pair struct {
 	// SourceGender is the normalized source gender; UNKNOWN when the source
 	// does not determine one.
 	SourceGender string
-	// Target is the target surface form, which ClassGenderNeutral inspects.
+	// ReferentUnique reports whether the discourse state pins the target side
+	// to exactly one referent.
 	ReferentUnique bool
+	// ReferentAligned reports whether the verifier has established that the
+	// target binding denotes *the same referent* the source bound, by canonical
+	// identity keys or by the committed referent decision of a zero anaphor.
+	//
+	// The realization classes EC1 and EC2 cannot be decided without it. A zero
+	// form and an explicit pronoun are the same *reference* only if the referent
+	// survived; otherwise the target quietly talks about someone else, and
+	// plan.md §41 calls that a referential diff, not a style choice. Without
+	// this field the classes licensed a realization change on surface shape
+	// alone — and since EC1 fires whenever the target is Japanese, that waived
+	// referent checking for every overt source referent.
+	ReferentAligned bool
 	// Role is the semantic role being realized.
 	Role string
 }
@@ -107,7 +120,13 @@ var Classes = []Class{
 			if !isCorefDimension(p.Dimension) {
 				return false
 			}
-			return p.SourceOvert && p.TargetZero && allowsZeroRealization(p.TargetLang, p.Role)
+			// The referent must have survived, and the target side must actually
+			// be pinned to one. A zero form whose antecedent is still an open
+			// distribution is not an equivalent realization, it is an unfinished
+			// decision, and §61 says the honest status for that is
+			// UNDERDETERMINED rather than GOOD.
+			return p.SourceOvert && p.TargetZero && p.ReferentAligned && p.ReferentUnique &&
+				allowsZeroRealization(p.TargetLang, p.Role)
 		},
 	},
 	{
@@ -117,7 +136,10 @@ var Classes = []Class{
 			if !isCorefDimension(p.Dimension) {
 				return false
 			}
-			return p.SourceZero && p.TargetOvert && p.ReferentUnique
+			// §42 already demands a unique referent here; ReferentAligned adds
+			// that the referent is the *source's*, which uniqueness alone does
+			// not say.
+			return p.SourceZero && p.TargetOvert && p.ReferentUnique && p.ReferentAligned
 		},
 	},
 	{
@@ -299,24 +321,6 @@ func completionClass(s string) string {
 	}
 	return ""
 }
-
-// HasHonorific reports whether s carries honorific or respectful content. The
-// realizer and the UI call this rather than carrying their own list.
-func HasHonorific(s string) bool { return honorificClass(s) != "" }
-
-// HasJapaneseCompletionMarker reports whether s contains an aspectual
-// completion marker such as てしまう.
-func HasJapaneseCompletionMarker(s string) bool {
-	for _, m := range japaneseCompletionMorphemes {
-		if strings.Contains(strings.ToLower(s), m) {
-			return true
-		}
-	}
-	return false
-}
-
-// GenderNeutralPronoun reports whether s is a gender-declining form in l.
-func GenderNeutralPronoun(l lang.Lang, s string) bool { return isGenderNeutralPronoun(l, s) }
 
 // allowsZeroRealization reports whether the language may leave a role
 // unrealized. Japanese omits subjects and objects freely; English only omits

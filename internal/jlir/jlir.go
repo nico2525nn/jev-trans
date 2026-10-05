@@ -223,6 +223,45 @@ func IsRole(r string) bool {
 	return false
 }
 
+// Alias kinds. These were bare string literals compared across five packages,
+// where a typo silently flips isZeroEntity and therefore the whole coreference
+// check. Every other JLIR vocabulary (types, roles, genders, tenses) already has
+// a typed constant block next to it; this one was missing.
+const (
+	AliasName        = "name"
+	AliasTitle       = "title"
+	AliasAlt         = "alias"
+	AliasPronoun     = "pronoun"
+	AliasZero        = "zero"
+	AliasTranslation = "translation"
+)
+
+// AliasKinds is the closed set, for validation.
+var AliasKinds = map[string]bool{
+	AliasName: true, AliasTitle: true, AliasAlt: true,
+	AliasPronoun: true, AliasZero: true, AliasTranslation: true,
+}
+
+// Feature keys shared across packages. The constraint system, the semantic
+// layer and the verifier all key on these strings, and nothing checked that
+// they agreed; the "ingestible" key in particular existed only as a literal in
+// two packages with no constant anywhere.
+const (
+	FeatureGender       = "gender"
+	FeatureNumber       = "number"
+	FeatureIngestible   = "ingestible"
+	FeatureDirection    = "direction"
+	FeatureHonorific    = "honorific"
+	FeaturePoliteness   = "politeness"
+	FeatureRegister     = "register"
+	FeatureTense        = "tense"
+	FeatureSpeechAct    = "speech_act"
+	FeatureMedium       = "medium"
+	FeatureCompetingSns = "competing_senses"
+	FeatureRoleDecision = "role_decision"
+	FeatureSpeakerRel   = "speaker_relation"
+)
+
 // Alias is one surface form an entity has been referred to by.
 type Alias struct {
 	Surface string    `json:"surface"`

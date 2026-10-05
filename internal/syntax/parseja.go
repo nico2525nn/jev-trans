@@ -903,10 +903,17 @@ func (p *jaParse) scopeAlternatives(c *Clause) {
 	if c.Quantifier == "" || c.Quantifier == "none" || c.Polarity != "negative" {
 		return
 	}
-	c.Probability = 0.55
+	// No weight preference here. The parser has no evidence about scope; the
+	// semantic layer owns that judgement and records it on the ScopeNode, and
+	// the D1 decision settles it. This used to assert 0.55 for NOT > ALL while
+	// internal/semantics asserted 0.45 for the same reading, so the two
+	// representations of one ambiguity disagreed about which reading was more
+	// likely. Equal weights here make the forest weights agree in direction
+	// with the semantic layer's instead of contradicting them.
+	c.Probability = 0.5
 	alt := *c
 	alt.Alternatives = nil
-	alt.Probability = 0.45
+	alt.Probability = 0.5
 	alt.Notes = nil
 	p.note(&alt, "scope: ALL > NOT — not everybody acted, so some did")
 	p.note(c, "scope: NOT > ALL — nobody acted")
