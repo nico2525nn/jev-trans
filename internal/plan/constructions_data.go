@@ -529,11 +529,14 @@ func builtinConstructions() []*Construction {
 		// construction at all, so 「今日はいい天気ですね。」 resolved its
 		// predicate correctly and then had nothing to build it from. The
 		// ontology declares both senses and the Japanese side realizes them.
-		enC("C.COPULA.EN.03", "COPULA", "SUBJ V", "be", 0.80).
+		// A copula with a complement needs a slot for it. 「今日はいい天気です」
+		// puts the property in the theme role, and a frame with no theme slot
+		// cannot realize the clause at all.
+		enC("C.COPULA.EN.03", "COPULA", "SUBJ V OBJ", "be", 0.80).
 			senses("COPULA.03").note("polite copula: です is the English plain copula"),
-		enC("C.COPULA.EN.04", "COPULA", "SUBJ V", "be probably", 0.72).
+		enC("C.COPULA.EN.04", "COPULA", "SUBJ V OBJ", "be probably", 0.72).
 			senses("COPULA.05").note("conjectural copula: でしょう asserts a probability"),
-		enC("C.COPULA.EN.05", "COPULA", "SUBJ V", "will be", 0.58).
+		enC("C.COPULA.EN.05", "COPULA", "SUBJ V OBJ", "will be", 0.58).
 			senses("COPULA.05").note("conjectural copula read as prediction"),
 		jaC("C.COPULA.JA.01", "COPULA", "SUBJ V", "だ", 0.70).
 			senses("COPULA.01").pol("da").note("plain copula"),

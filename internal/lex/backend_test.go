@@ -183,9 +183,14 @@ func TestProcessBackendShortCircuitsEmptyInput(t *testing.T) {
 // dictionary format and silently alter every analysis.
 func TestSudachiConfigIsPinnedAndProfileScoped(t *testing.T) {
 	p := NewProcessAnalyzer(SudachiConfig("core"))
-	if !strings.Contains(p.Version(), "0.8") {
-		t.Errorf("version = %q; plan2.md requires Sudachi to be pinned because 0.8 patch "+
-			"releases can change the dictionary format", p.Version())
+	// The pin must name a version of SudachiPy that exists. It previously said
+	// 0.8.2, which is the Java Sudachi release; the current SudachiPy stable is
+	// 0.7.0 and it does read a V1 SudachiDict.
+	if strings.Contains(p.Version(), "0.8") {
+		t.Errorf("version = %q; 0.8.x is a Java Sudachi release, not a SudachiPy one", p.Version())
+	}
+	if !strings.Contains(p.Version(), "0.7") {
+		t.Errorf("version = %q, want the current SudachiPy stable", p.Version())
 	}
 	if !strings.Contains(p.Dictionary(), "core") {
 		t.Errorf("dictionary = %q, want the core SudachiDict", p.Dictionary())

@@ -87,26 +87,7 @@ func cmdServe(args []string) error {
 	}
 
 	client := jev.New(jev.Options{Model: *model, Offline: *offline})
-	registry := lex.NewRegistry()
-	external := false
-	if *morph != "builtin" && *morph != "auto" {
-		registry.Register(lex.NewProcessAnalyzer(lex.ProcessConfig{
-			Command: *morph, Name: *morph, Profiles: nil,
-		}))
-		external = true
-	} else if *morph == "auto" {
-		// Auto registers Sudachi when it is actually usable and silently keeps
-		// the builtin otherwise. A configured-but-missing analyser is reported
-		// rather than treated as absent, because the two mean different things.
-		if lex.Available("python3") && sudachiUsable() {
-			registry.Register(lex.NewProcessAnalyzer(lex.SudachiConfig(*dict)))
-			external = true
-		}
-	}
-	engine := pipeline.NewEngine(pipeline.EngineConfig{
-		Jev: client, Morph: registry, ExternalMorph: external,
-		MorphProfile: lex.Profile(*profile),
-	})
+	engine := newEngine(client, *morph, *dict, *profile, *offline)
 	srv := server.New(server.Config{Engine: engine, Jev: client, Addr: *addr})
 
 	if !client.Enabled() {
@@ -150,6 +131,11 @@ func cmdTranslate(args []string, dumpTrace bool) error {
 	mode := fs.String("mode", "auto", "auto | interactive | strict")
 	asJSON := fs.Bool("json", false, "emit the full JSON response")
 	model := fs.String("model", "jev-1.13-free", "oracle model id")
+	morph := fs.String("morph", "auto",
+		"morphological backend: builtin, auto, or a command speaking the analysis protocol")
+	dict := fs.String("sudachi-dict", "core", "SudachiDict build when the sudachi backend is used")
+	profile := fs.String("morph-profile", "auto",
+		"lexicon profile: auto | modern | modern-literary | old-kana-colloquial")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -167,7 +153,7 @@ func cmdTranslate(args []string, dumpTrace bool) error {
 	}
 
 	client := jev.New(jev.Options{Model: *model})
-	engine := pipeline.NewEngine(pipeline.EngineConfig{Jev: client})
+	engine := newEngine(client, *morph, *dict, *profile, false)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -417,4 +403,32 @@ func sudachiUsable() bool {
 		return false
 	}
 	return strings.Contains(string(out), "'")
+}
+
+// newEngine builds an engine with the morphological backend the caller asked
+// for. It is shared by `serve` and `translate` on purpose: a backend configured
+// for the server but not for the command line would make every measurement
+// taken with the CLI describe the builtin analyser instead of the real one.
+func newEngine(client *jev.Client, morph, dict, profile string, offline bool) *pipeline.Engine {
+	registry := lex.NewRegistry()
+	external := false
+	switch {
+	case morph != "builtin" && morph != "auto":
+		registry.Register(lex.NewProcessAnalyzer(lex.ProcessConfig{
+			Command: morph, Name: morph,
+		}))
+		external = true
+	case morph == "auto":
+		// Auto registers Sudachi when it actually works here and keeps the
+		// builtin otherwise. A configured-but-broken analyser is reported
+		// rather than treated as absent: the two mean different things.
+		if lex.Available("python3") && sudachiUsable() {
+			registry.Register(lex.NewProcessAnalyzer(lex.SudachiConfig(dict)))
+			external = true
+		}
+	}
+	return pipeline.NewEngine(pipeline.EngineConfig{
+		Jev: client, Morph: registry, ExternalMorph: external,
+		MorphProfile: lex.Profile(profile), OfflineClient: client,
+	})
 }

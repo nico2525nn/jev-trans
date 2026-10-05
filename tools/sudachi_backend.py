@@ -5,10 +5,10 @@ This file is the process boundary. The Go core never imports sudachipy, never
 links a native library, and never ships a dictionary: it starts this script,
 writes one JSON request per line, and reads one JSON response per line. If the
 script or the dictionary is missing the core falls back to its builtin
-analyser, and the trace says so.
+analyser, and the trace says which one answered.
 
     {"text": "...", "profile": "modern"}
-    {"backend":"sudachi","version":"0.8.2","dictionary":"core","tokens":[...]}
+    {"backend":"sudachi","version":"0.7.0","dictionary":"core","tokens":[...]}
 
 Run it directly to check an installation:
 
@@ -19,70 +19,106 @@ import json
 import os
 import sys
 
-# The dictionary search paths SudachiDict uses. SUDACHIDICT_DIR wins so an
-# operator can point at a specific build, which matters because SudachiDict
-# ships Small, Core and Full and the analysis differs between them.
+# Where a specific SudachiDict build is pinned. SUDACHIDICT_DIR is Sudachi's own
+# variable and still wins if this is unset.
 DICT_ENV = "JEV_SUDACHI_DICT"
 
 
 def load_dictionary(profile):
-    """Build a Sudachi tokenizer, or explain why it cannot be built.
+    """Build a Sudachi tokenizer for the profile.
 
-    profile maps onto a dictionary choice rather than onto a different analyser:
-    modern and modern-literary both want SudachiDict, and old-kana-colloquial
-    wants the 国語研 UniDic build, which is a different dictionary in the same
-    format and is configured through the same environment variable.
+    The public API is Dictionary -> tokenizer(). Constructing
+    sudachipy.Tokenizer directly is not supported and raises
+    "cannot create Tokenizer instances" — which looks exactly like an
+    incompatible dictionary format and is not one. Getting that wrong is how an
+    adapter ends up reporting a version incompatibility that does not exist.
+
+    profile selects a dictionary rather than a different analyser: modern and
+    modern-literary both want SudachiDict, and old-kana-colloquial wants the
+    国語研 UniDic build, which is the same format behind a different path.
     """
-    import sudachipy  # noqa: E402
-    from sudachipy import dictionary as _dictionary  # noqa: E402
+    from sudachipy import dictionary as _dictionary
 
     path = os.environ.get(DICT_ENV) or os.environ.get("SUDACHIDICT_DIR")
-
-    # Newer shape: Config moved under the dictionary submodule and the tokenizer
-    # takes the built dictionary.
-    if hasattr(_dictionary, "Config"):
+    if path:
         cfg = _dictionary.Config()
-        if path:
-            cfg.system_dict.update(path=path)
-        return sudachipy.Tokenizer(_dictionary.Dictionary(cfg))
+        cfg.system_dict.update(path=path)
+        d = _dictionary.Dictionary(cfg)
+    else:
+        d = _dictionary.Dictionary()
 
-    # Older shape: Config at the package root, Tokenizer takes no arguments.
-    if hasattr(sudachipy, "Config"):
-        cfg = sudachipy.Config()
-        if path:
-            cfg.system_dict.update(path=path)
-        return sudachipy.Tokenizer(_dictionary.Dictionary())
+    # tokenizer() is the current entry point; create() is the deprecated name
+    # and is kept only for a SudachiPy older than 0.5.
+    if hasattr(d, "tokenizer"):
+        return d.tokenizer()
+    return d.create()
 
-    # Oldest shape: the tokenizer wants (dictionary, offset, mode) and the
-    # package-level Tokenizer is only the type, not a constructor.
-    try:
-        return _dictionary.Dictionary()
-    except TypeError:
-        pass
-    try:
-        return sudachipy.Tokenizer(_dictionary.Dictionary(), 0, sudachipy.SplitMode.C)
-    except Exception:  # noqa: BLE001
-        pass
-    raise RuntimeError("no usable sudachipy tokenizer constructor was found")
+
+def _oov(m):
+    """Whether Sudachi flagged the morpheme as out of vocabulary.
+
+    The attribute was renamed between releases, so both are probed rather than
+    assuming one: reporting every token as unknown would make the corpus metrics
+    meaningless, and reporting none of them would hide the gaps.
+    """
+    for attr in ("is_oov", "is_known"):
+        fn = getattr(m, attr, None)
+        if fn is None:
+            continue
+        try:
+            # is_oov() answers "was this out of vocabulary", so it inverts
+            # directly; is_known() answers the opposite. Calling the attribute
+            # without parentheses returns the bound method, which is truthy,
+            # and would mark every morpheme unknown.
+            if attr == "is_oov":
+                return bool(fn())
+            return not bool(fn())
+        except Exception:  # noqa: BLE001
+            continue
+    # No flag available: treat as known, which is the optimistic and therefore
+    # less misleading direction — the coverage ratio is reported separately.
+    return False
+
+
+def _byte_offsets(text):
+    """Map character index -> byte offset.
+
+    Sudachi reports character offsets; the Go core uses byte offsets
+    everywhere, because every span it records is a slice of the original
+    string. Sending character offsets makes every downstream span point at the
+    wrong place for any text containing multi-byte characters — which is all
+    Japanese.
+    """
+    table = [0]
+    total = 0
+    for ch in text:
+        total += len(ch.encode("utf-8"))
+        table.append(total)
+    return table
 
 
 def tokenize(tok, text):
     out = []
+    offsets = _byte_offsets(text)
     for m in tok.tokenize(text):
-        surfaces, _ = m.surface(), m.dictionary_form()
+        reading = ""
+        try:
+            reading = m.reading_form() or ""
+        except Exception:  # noqa: BLE001
+            pass
         out.append({
             "surface": m.surface(),
             "lemma": m.normalized_form() or m.surface(),
             "baseForm": m.dictionary_form() or m.surface(),
             "normalized": m.normalized_form(),
-            "reading": (m.reading_form() or ""),
+            "reading": reading,
             "pos": list(m.part_of_speech()),
-            "start": m.start(),
-            "end": m.end(),
-            # Sudachi's own OOV flag, kept so the trace can distinguish a
-            # dictionary hit from a character-category guess.
-            "unknown": bool(m.is_known() is False),
-            "features": {"rule": "sudachi"},
+            # 0.7 exposes the offsets on the morpheme as begin/end rather than
+            # start/end, and both are character offsets; convert to bytes.
+            "start": offsets[min(m.begin(), len(offsets) - 1)],
+            "end": offsets[min(m.end(), len(offsets) - 1)],
+            "unknown": _oov(m),
+            "features": {"rule": "sudachi", "oov": "1" if _oov(m) else "0"},
         })
     return out
 
@@ -91,16 +127,19 @@ def sudachi_version():
     try:
         import sudachipy
         return getattr(sudachipy, "__version__", "unknown")
-    except Exception:
+    except Exception:  # noqa: BLE001
         return "unavailable"
 
 
 def dict_name():
     path = os.environ.get(DICT_ENV) or os.environ.get("SUDACHIDICT_DIR")
     if not path:
-        return "default"
-    base = os.path.basename(os.path.normpath(path))
-    return base
+        try:
+            import sudachidict_core
+            return "sudachidict_core"
+        except Exception:  # noqa: BLE001
+            return "default"
+    return os.path.basename(os.path.normpath(path))
 
 
 def respond(obj):
@@ -118,11 +157,11 @@ def main():
             print(f"sudachi unavailable: {type(e).__name__}: {e}")
             return 1
         for t in tokenize(tok, text):
-            print(f"  {t['surface']!r}\t{t['lemma']}\t{t['pos']}\t{t['unknown']}")
+            print(f"  {t['surface']!r}\t{t['lemma']}\t{t['pos']}\tunknown={t['unknown']}")
         return 0
 
-    # The tokenizer is built once: importing SudachiDict costs about a second, and
-    # paying that per sentence would dominate every translation.
+    # The tokenizer is built once: importing SudachiDict costs about a second,
+    # and paying that per sentence would dominate every translation.
     tok = None
     load_error = None
     version = sudachi_version()

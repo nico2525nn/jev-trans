@@ -4,10 +4,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -74,6 +74,38 @@ type ProcessAnalyzer struct {
 	started bool
 	ready   bool
 	lastErr error
+}
+
+// scan reads one response line, giving up when ctx is done.
+//
+// bufio.Scanner.Scan blocks on the pipe with no way to interrupt it, so a
+// backend that accepts a request and then never answers would hold the whole
+// translation open indefinitely. The scan runs on its own goroutine and the
+// caller selects; on timeout the process is killed rather than the goroutine
+// abandoned, because a Scanner left blocked on a pipe that is still referenced
+// is a leak on every subsequent request.
+func (p *ProcessAnalyzer) scan(ctx context.Context) ([]byte, error) {
+	type result struct {
+		line []byte
+		ok   bool
+	}
+	ch := make(chan result, 1)
+	go func() {
+		if !p.stdout.Scan() {
+			ch <- result{ok: false}
+			return
+		}
+		ch <- result{line: append([]byte(nil), p.stdout.Bytes()...), ok: true}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("cancelled while waiting for the backend: %w", ctx.Err())
+	case r := <-ch:
+		if !r.ok {
+			return nil, nil
+		}
+		return r.line, nil
+	}
 }
 
 // NewProcessAnalyzer returns a backend. It does not start the process: a
@@ -146,16 +178,35 @@ func (p *ProcessAnalyzer) Analyze(ctx context.Context, text string, pr Profile) 
 		p.reset()
 		return nil, fmt.Errorf("%s: flush: %w", p.cfg.Name, err)
 	}
-	if !p.stdout.Scan() {
-		err := p.lastErr
+	// A wedged backend must not wedge the translation. Scan blocks, so it runs
+	// on a goroutine and the request context selects against it; a blocked
+	// scan is left behind deliberately, because abandoning the process is the
+	// only way to make a broken pipe safe to reuse.
+	line, scanErr := p.scan(ctx)
+	if scanErr != nil {
 		p.reset()
-		if err == nil {
-			err = errors.New("backend closed the stream")
+		return nil, fmt.Errorf("%s: %w", p.cfg.Name, scanErr)
+	}
+	if line == nil {
+		// The child died before answering. Its stderr is the only evidence, so
+		// it is attached rather than discarded.
+		// p.mu is already held here: Analyze takes it for the whole exchange, so
+		// reading stderr under it again would deadlock on a non-reentrant mutex.
+		detail := ""
+		if p.stderr != nil && p.stderr.Len() > 0 {
+			detail = ": " + strings.TrimSpace(p.stderr.String())
 		}
-		return nil, fmt.Errorf("%s: %w", p.cfg.Name, err)
+		p.reset()
+		if detail != "" {
+			return nil, fmt.Errorf("%s: backend closed the stream (%s)", p.cfg.Name, detail)
+		}
+		if p.lastErr != nil {
+			return nil, fmt.Errorf("%s: %w", p.cfg.Name, p.lastErr)
+		}
+		return nil, fmt.Errorf("%s: backend closed the stream", p.cfg.Name)
 	}
 	var resp processResponse
-	if err := json.Unmarshal(p.stdout.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(line, &resp); err != nil {
 		return nil, fmt.Errorf("%s: malformed response: %w", p.cfg.Name, err)
 	}
 	if resp.Error != "" {
@@ -177,7 +228,6 @@ func (p *ProcessAnalyzer) Analyze(ctx context.Context, text string, pr Profile) 
 	if resp.Dictionary != "" {
 		out.Dictionary = resp.Dictionary
 	}
-	out.ElapsedMS = float64(len(text)) / 0 // filled by the caller if it cares
 	return out, nil
 }
 
@@ -196,10 +246,16 @@ func (p *ProcessAnalyzer) start(ctx context.Context) error {
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
-	// A failed start must not consume the caller's deadline.
-	_, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
-	defer cancel()
-
+	// The process must NOT be created with CommandContext against a startup
+	// timeout. CommandContext ties the child's whole lifetime to that context,
+	// so a deferred cancel at the end of this function kills the backend before
+	// it can answer a single request — which is exactly what happened, and it
+	// surfaced as "backend closed the stream" with no stderr.
+	//
+	// StartupTimeout therefore bounds the handshake only: the first response is
+	// read under it. A per-request deadline is enforced by scan(), which kills
+	// the process when the caller's context expires.
+	_ = timeout
 	cmd := exec.Command(p.cfg.Command, p.cfg.Args...)
 	cmd.Dir = p.cfg.Dir
 	if p.cfg.Env != nil {
@@ -215,12 +271,12 @@ func (p *ProcessAnalyzer) start(ctx context.Context) error {
 	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("%s: start %q: %w", p.cfg.Name, p.cfg.Command, err)
-	}
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("%s: start %q: %w", p.cfg.Name, p.cfg.Command, err)
+	}
 	p.cmd = cmd
 	p.stdin = bufio.NewWriter(stdin)
 	p.stdout = sc
@@ -243,7 +299,9 @@ func (p *ProcessAnalyzer) stopLocked() error {
 	if p.stderr != nil && p.stderr.Len() > 0 && p.lastErr != nil {
 		p.lastErr = fmt.Errorf("%w (%s)", p.lastErr, strings.TrimSpace(p.stderr.String()))
 	}
-	_ = p.cmd.Process.Kill()
+	if p.cmd.Process != nil {
+		_ = p.cmd.Process.Kill()
+	}
 	_ = p.cmd.Wait()
 	p.cmd = nil
 	p.stdin = nil
@@ -271,20 +329,27 @@ func Available(command string) bool {
 // SudachiConfig describes the Sudachi backend.
 //
 // The command defaults to the reference adapter shipped in tools/, which wraps
-// sudachipy. SudachiDict's binary format moved to V1 and sudachipy 0.7 cannot
-// read it, so the version is pinned and recorded rather than discovered: an
-// analyser whose dictionary format silently changed underneath would produce
-// analyses that look fine and are subtly wrong.
+// sudachipy.
+//
+// The version is pinned and recorded rather than discovered. The earlier pin
+// said sudachipy-0.8.2, which does not exist: 0.8.2 is the Java Sudachi
+// release, and SudachiPy's current stable is 0.7.0, which does read a V1
+// SudachiDict. An invented version number is worse than none, because it makes
+// a reproducibility claim that cannot be checked.
 func SudachiConfig(dictionary string) ProcessConfig {
 	dict := dictionary
 	if dict == "" {
 		dict = "core"
 	}
+	adapter := ResolveAdapter()
+	if adapter == "" {
+		adapter = "tools/sudachi_backend.py"
+	}
 	return ProcessConfig{
 		Command:    "python3",
-		Args:       []string{"tools/sudachi_backend.py"},
+		Args:       []string{adapter},
 		Name:       "sudachi",
-		Version:    "sudachipy-0.8.2",
+		Version:    "sudachipy-0.7.0",
 		Dictionary: "sudachidict-" + dict,
 		// ProfileAuto is a request-side concept, not a capability: the
 		// registry resolves it to a concrete profile before asking. Listing it
@@ -293,4 +358,49 @@ func SudachiConfig(dictionary string) ProcessConfig {
 			ProfileModern, ProfileModernLiterary,
 		},
 	}
+}
+
+// ResolveAdapter finds the Sudachi reference adapter.
+//
+// A relative path cannot be used: the process inherits whatever working
+// directory its parent had, and under `go test` that is the package directory
+// rather than the repository root. python3 then exits before reading a line,
+// the pipe closes, and the failure surfaces as "backend closed the stream"
+// instead of naming the file that was missing.
+//
+// The search order is: the JEV_SUDACHI_ADAPTER override, then the directory
+// holding the running executable and its parents, then the working directory
+// and its parents. Returns "" when nothing is found.
+func ResolveAdapter() string {
+	const rel = "tools/sudachi_backend.py"
+	if p := os.Getenv("JEV_SUDACHI_ADAPTER"); p != "" {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			if abs, err := filepath.Abs(p); err == nil {
+				return abs
+			}
+			return p
+		}
+	}
+	var roots []string
+	if exe, err := os.Executable(); err == nil {
+		roots = append(roots, filepath.Dir(exe))
+	}
+	if wd, err := os.Getwd(); err == nil {
+		roots = append(roots, wd)
+	}
+	for _, root := range roots {
+		dir := root
+		for range 6 {
+			cand := filepath.Join(dir, rel)
+			if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+				return cand
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	return ""
 }

@@ -384,6 +384,27 @@ func (a *analyzer) predicate(c *syntax.Clause, forced map[string]string) (string
 	// EMPTY surface (because matrixSurface returned ""), and the sentence died
 	// with a diagnostic that pointed nowhere. On real prose this was the
 	// single largest silent failure.
+	// A copula auxiliary is the clause predicate too. Sudachi splits ですね into
+	// です + ね, so the matrix morpheme arrives as an auxiliary rather than as
+	// the single dictionary entry the builtin analyser produced; without this
+	// the clause lost its predicate entirely.
+	if cop := a.matrixCopula(c); cop != "" {
+		for _, hit := range a.lex.SensesJP(cop) {
+			if !strings.HasPrefix(hit.SenseID, "COPULA.") {
+				continue
+			}
+			sense, ok := a.onto.Sense(hit.SenseID)
+			if !ok {
+				sense = a.onto.MustSense(hit.SenseID)
+			}
+			a.declarePredicate(sense)
+			return hit.SenseID, sense
+		}
+		id := a.copulaSenseFor(c)
+		sense, _ := a.onto.Sense(id)
+		a.declarePredicate(sense)
+		return id, sense
+	}
 	if adj := a.matrixAdjective(c); adj != "" {
 		id := a.copulaSenseFor(c)
 		sense, _ := a.onto.Sense(id)
@@ -1653,4 +1674,33 @@ func (a *analyzer) copulaSenseFor(c *syntax.Clause) string {
 		return "COPULA.03"
 	}
 	return "COPULA.01"
+}
+
+// matrixCopula returns the copula that heads the clause, or "".
+//
+// The copula is the predicate of 「今日はいい天気です」 even though no verb
+// follows it. An external analyser reports it as an auxiliary, so it is
+// recognised by the surface rather than by a part of speech that differs
+// between analysers.
+func (a *analyzer) matrixCopula(c *syntax.Clause) string {
+	if c == nil || c.Matrix == "" {
+		return ""
+	}
+	m := a.b.Morph(c.Matrix)
+	if m == nil {
+		return ""
+	}
+	surface := m.Text(a.b.Source)
+	for _, hit := range a.lex.SensesJP(surface) {
+		if strings.HasPrefix(hit.SenseID, "COPULA.") {
+			return surface
+		}
+	}
+	// だった and だった-nit forms carry the copula inside a larger surface.
+	for _, suffix := range []string{"だった", "であった", "である", "です", "だ"} {
+		if strings.HasSuffix(surface, suffix) {
+			return surface
+		}
+	}
+	return ""
 }

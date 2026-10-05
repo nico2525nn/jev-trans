@@ -216,13 +216,28 @@ func (r *Registry) Analyze(ctx context.Context, text string, p Profile, l lang.L
 	if p == ProfileAuto {
 		p = DetectProfile(text)
 	}
-	var firstErr error
+	var rejected []string
 	for _, a := range r.backends {
 		if a == nil || !a.Supports(p) {
+			if a != nil {
+				rejected = append(rejected, fmt.Sprintf("%s does not serve profile %q", a.Name(), p))
+			}
 			continue
 		}
 		an, err := a.Analyze(ctx, text, p)
-		if err == nil && an != nil {
+		if err != nil {
+			// The reason a backend was not used has to travel with the answer.
+			// Recording it in the trace but not in the returned Analysis meant
+			// that "Sudachi was configured and failed" looked identical to
+			// "Sudachi was never installed".
+			rejected = append(rejected, fmt.Sprintf("%s: %v", a.Name(), err))
+			continue
+		}
+		if an != nil {
+			if len(rejected) > 0 {
+				an.Notes = append(an.Notes, rejected...)
+				rejected = nil
+			}
 			an.Profile = p
 			if an.Backend == "" {
 				an.Backend = a.Name()
@@ -235,16 +250,13 @@ func (r *Registry) Analyze(ctx context.Context, text string, p Profile, l lang.L
 			r.mu.Unlock()
 			return an, nil
 		}
-		if firstErr == nil {
-			firstErr = err
-		}
 	}
 	// Nothing worked. The builtin never fails on non-empty input, so reaching
 	// here means the input itself is unusable.
-	if firstErr == nil {
-		firstErr = fmt.Errorf("no morphological backend is registered")
+	if len(rejected) == 0 {
+		return nil, fmt.Errorf("no morphological backend is registered")
 	}
-	return nil, firstErr
+	return nil, fmt.Errorf("no morphological backend answered (%s)", strings.Join(rejected, "; "))
 }
 
 // LastAnalysis returns the most recent successful analysis, for the trace.
@@ -315,8 +327,17 @@ func (a *Analysis) Lattice(source string) *forest.MorphForest {
 		for k, v := range t.Features {
 			feats[k] = v
 		}
-		if len(t.POS) > 0 && feats["pos"] == "" {
-			feats["pos"] = t.POS[0]
+		if len(t.POS) > 0 {
+			if feats["pos"] == "" {
+				feats["pos"] = t.POS[0]
+			}
+			// A Universal POS tuple carries the conjugation in its later
+			// elements: 助動詞-デス, 終止形-一般, 未然形-一般. The core's clause
+			// segmentation decides what is a predicate from the copula, tense
+			// and mood features, so those elements have to be translated rather
+			// than dropped. Dropping them made です look like a bare auxiliary
+			// with no predicate, and every copular sentence became a fragment.
+			applyJapaneseFeatures(feats, t.POS, t.Surface)
 		}
 		m := &forest.Morph{
 			ID:      fmt.Sprintf("m%d", i+1),
@@ -383,4 +404,42 @@ func scriptOf(s string) forest.Script {
 		}
 	}
 	return forest.ScriptOther
+}
+
+// copulaMarkers are the elements of a Universal POS tuple that identify the
+// copula. Sudachi puts them after the coarse part of speech.
+var copulaMarkers = []string{"デス", "ダ", "デアル", "ナイ"}
+
+var tenseMarkers = map[string]string{
+	"終止形-一般": "present", "連用形-一般": "present", "終止形-过去": "past",
+	"連用形-过去": "past", "未然形-一般": "", "命令形-一般": "",
+}
+
+var tenseOfConj = map[string]string{
+	"終止形": "present", "連用形": "present", "連体形": "present",
+	"未然形": "present", "命令形": "imperative", "終止形-过去": "past",
+}
+
+// applyJapaneseFeatures translates the Universal POS tuple into the feature
+// vocabulary the core reads. A backend that reports a richer analysis should
+// not have to also re-implement the core's conventions.
+func applyJapaneseFeatures(feats map[string]string, pos []string, surface string) {
+	for _, el := range pos {
+		for _, marker := range copulaMarkers {
+			if el == marker || strings.HasSuffix(el, "-"+marker) {
+				feats["copula"] = "1"
+			}
+		}
+		if t, ok := tenseMarkers[el]; ok && t != "" && feats["tense"] == "" {
+			feats["tense"] = t
+		}
+		for pre, val := range tenseOfConj {
+			if strings.HasPrefix(el, pre) && feats["tense"] == "" {
+				feats["tense"] = val
+			}
+		}
+	}
+	if feats["tense"] == "" && strings.Contains(surface, "た") {
+		feats["tense"] = "past"
+	}
 }
