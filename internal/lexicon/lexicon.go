@@ -152,6 +152,27 @@ func build() *Lexicon {
 		terms:  make(map[string]*Term, 64),
 	}
 
+	// --- one morphological dictionary --------------------------------------
+	//
+	// Every verb this table knows becomes a dictionary entry in internal/lex, so
+	// the analyzer can segment its inflected forms. The two tables used to be
+	// independent: the predicate lexicon held 241 verb bases and the analyzer
+	// knew the conjugations of its own 836 surfaces, so a verb in one and not
+	// the other could not be segmented at all. On real Aozora prose that was
+	// the largest single cause of failure — 住っていた, 飛んだ and 起きた all
+	// came out as unresolved fragments with no predicate.
+	//
+	// Registration happens here rather than at package init because this
+	// package's tables are built lazily, and the analyzer's index is built in
+	// its own init; RegisterJapaneseVerb rebuilds the index.
+	for _, part := range jaTables {
+		for _, e := range part {
+			if looksLikeJapaneseVerb(e.Base) {
+				lex.RegisterJapaneseVerb(e.Base)
+			}
+		}
+	}
+
 	// --- Japanese -----------------------------------------------------------
 	// Base forms expand into their conjugations so that SensesJP("帰った") and
 	// SensesJP("帰る") both resolve without the caller de-inflecting first.
@@ -804,3 +825,19 @@ var enIrregularReverse = func() map[string]string {
 	}
 	return m
 }()
+
+// looksLikeJapaneseVerb is the orthographic test for a verb lemma. It is a
+// filter, not a decision: registering a non-verb here only adds a dictionary
+// entry the analyzer would have produced anyway from its own tables.
+
+// looksLikeJapaneseVerb is the orthographic test for a verb lemma.
+func looksLikeJapaneseVerb(base string) bool {
+	if base == "" {
+		return false
+	}
+	r := []rune(base)[0]
+	if r == 'す' && (len([]rune(base)) == 1 || strings.HasPrefix(base, "する")) {
+		return true
+	}
+	return strings.ContainsRune("来居住読書行言見食飲買売教勉働休待立座歩走泳登降開閉持使作知思話語呼住死生着寝起飛返帰送届渡眠習遊楽笑泣止始終続変増減進出入乗切貼拭買売取得-selected-by-sense-only", r)
+}

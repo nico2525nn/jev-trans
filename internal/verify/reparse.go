@@ -28,6 +28,7 @@ import (
 	"github.com/nico/jev-trans/internal/jlir"
 	"github.com/nico/jev-trans/internal/lang"
 	"github.com/nico/jev-trans/internal/lex"
+	"github.com/nico/jev-trans/internal/lexicon"
 	"github.com/nico/jev-trans/internal/semantics"
 	"github.com/nico/jev-trans/internal/syntax"
 )
@@ -90,6 +91,10 @@ func Reparse(text string, l lang.Lang) (g *jlir.Graph) {
 // language, treating both as total functions: a nil result or a bundle with no
 // clause means the string is unparsable, and the caller turns that into nil.
 func analyzeAndParse(text string, l lang.Lang) *syntax.Bundle {
+	// See pipeline.Translate: the analyzer dictionary is populated from the
+	// predicate lexicon, which builds lazily, so it must exist before the
+	// morphological stage runs or the analyzer cannot segment its verbs.
+	lexicon.Default()
 	switch l {
 	case lang.JA:
 		return syntax.ParseJA(text, lex.AnalyzeJA(text))

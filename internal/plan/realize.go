@@ -446,11 +446,37 @@ func unfillableRole(ep *EventPlan, c *Construction) (role string, missing bool) 
 		if np.IsClause {
 			continue
 		}
-		if !frameBinds(c, ep, r) {
-			return r, true
+		if frameBinds(c, ep, r) {
+			continue
 		}
+		// Dropping a CORE argument reverses the proposition: 「太郎が花子に本を
+		// 渡した」 without its recipient says Taro gave a book to nobody. That
+		// is the case plan.md §37 makes hard.
+		//
+		// Dropping an ADJUNCT does not. A time or manner phrase the construction
+		// has no slot for is framing, and the sentence without it is still the
+		// same sentence: 「街道のところどころにちらばって黒い小さい家だ」 losing
+		// its time adjunct is a stylistic loss, not a wrong translation. Treating
+		// these as hard rejected every sentence that carried one, which on real
+		// prose was most of them.
+		if isAdjunctRole(r) {
+			continue
+		}
+		return r, true
 	}
 	return "", false
+}
+
+// isAdjunctRole reports whether a role is framing rather than content. The
+// distinction is the difference between a translation being wrong and a
+// translation being shorter than the source.
+func isAdjunctRole(role string) bool {
+	switch role {
+	case jlir.RoleTime, jlir.RoleManner, jlir.RoleCause, jlir.RoleInstrument,
+		jlir.RoleComitative:
+		return true
+	}
+	return false
 }
 
 // frameBinds reports whether the construction's pattern has a place for the

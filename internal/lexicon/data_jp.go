@@ -145,6 +145,28 @@ var jaTableC = []entry{
 	{Base: "匂う", Spec: "PERCEIVE.08:0.84"},
 	{Base: "触る", Spec: "PERCEIVE.09:0.78 MOVE.09:0.18"},
 	{Base: "見分ける", Spec: "PERCEIVE.10:0.72 PERCEIVE.11:0.26"},
+	// Polite forms are indexed explicitly. Deleting the duplicated
+	// conjugation engine in internal/lexicon left the table holding base forms
+	// only, which is accurate but fatal in practice: です/ます/ました/まして are
+	// the forms almost every ordinary Japanese sentence actually uses, so the
+	// copula and light verbs were unreachable and every polite sentence died as
+	// UNKNOWN.VERB with a perfectly good morphological analysis behind it.
+	{Base: "です", Spec: "COPULA.03:0.92"},
+	{Base: "ですね", Spec: "COPULA.03:0.92"},
+	{Base: "ですが", Spec: "COPULA.03:0.80 COPULA.05:0.14"},
+	{Base: "でした", Spec: "COPULA.02:0.92"},
+	{Base: "では", Spec: "COPULA.03:0.70"},
+	{Base: "ます", Spec: "COPULA.03:0.60 EXIST.02:0.20"},
+	{Base: "ました", Spec: "COPULA.02:0.60"},
+	{Base: "まして", Spec: "COPULA.03:0.70"},
+	{Base: "ません", Spec: "COPULA.03:0.62"},
+	{Base: "ませんでした", Spec: "COPULA.02:0.62"},
+	{Base: "ましょう", Spec: "COPULA.03:0.60"},
+	{Base: "ますか", Spec: "COPULA.03:0.70"},
+	{Base: "ませんで", Spec: "COPULA.03:0.58"},
+	{Base: "だっ", Spec: "COPULA.02:0.90"},
+	{Base: "ならば", Spec: "COPULA.03:0.60"},
+	{Base: "でしょう", Spec: "COPULA.05:0.86 COPULA.03:0.12"},
 	{Base: "だ", Spec: "COPULA.01:0.92"},
 	{Base: "である", Spec: "COPULA.04:0.90"},
 	{Base: "です", Spec: "COPULA.03:0.92"},

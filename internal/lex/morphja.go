@@ -153,6 +153,84 @@ func init() {
 	jaBuildConjIndex()
 }
 
+// RegisterJapaneseVerb adds a verb the analyzer did not already know, and
+// conjugates it.
+//
+// The predicate lexicon and the morphological analyzer used to be two separate
+// tables: internal/lexicon held 241 verb bases and internal/lex knew the
+// conjugations of 836 surfaces drawn from its own list. A verb in the first and
+// not the second could not be segmented at all, so 住っていた came out as
+// 住っ/て/いた with two unresolved morphemes and no predicate, and the sentence
+// died. On real Aozora prose that was the single largest cause of failure.
+//
+// internal/lexicon already imports this package, so it can feed its verbs in
+// through this hook and there is no cycle. The result is one morphological
+// dictionary with two sources rather than two dictionaries.
+//
+// The class is inferred from the lemma, which is the standard orthographic test
+// and is right for the overwhelming majority of Japanese verbs: a する ending is
+// ichidan, a う ending is godan and takes its row from the final kana, and
+// する/来る/往来する and friends are irregular by an explicit list.
+func RegisterJapaneseVerb(lemma string) {
+	lemma = strings.TrimSpace(lemma)
+	if lemma == "" {
+		return
+	}
+	if _, known := jaLex[lemma]; known {
+		return
+	}
+	class := jaInferVerbClass(lemma)
+	jaLex[lemma] = []jaLexEntry{{
+		pos: forest.POSVerb, base: lemma, lem: lemma,
+		feats: map[string]string{"cj": class, "class": "open_class", "from": "predicate lexicon"},
+	}}
+	// The forward conjugation tables are replayed lazily rather than here: this
+	// is called once per verb from the predicate lexicon, and rebuilding a
+	// 8192-entry index 240 times to reach the same result is wasted work.
+	jaConjDirty = true
+}
+
+// jaConjDirty records that verbs were registered after this package's init ran.
+// The predicate lexicon is built lazily, so it always does: package
+// initialization order gives no guarantee that its init ran before ours.
+var jaConjDirty bool
+
+// ensureConjIndex replays the conjugation tables if anything registered a verb
+// since the last time it ran.
+func ensureConjIndex() {
+	if !jaConjDirty {
+		return
+	}
+	jaBuildConjIndex()
+	jaConjDirty = false
+}
+
+// jaInferVerbClass classifies a verb lemma from its orthography.
+func jaInferVerbClass(lemma string) string {
+	switch lemma {
+	case "来る", "くる", "いう", "言う", "する", "為る":
+		return "k"
+	}
+	rs := []rune(lemma)
+	if len(rs) == 0 {
+		return ""
+	}
+	switch last := rs[len(rs)-1]; last {
+	case 'る':
+		return "i"
+	case 'う':
+		return "g"
+	case 'く':
+		return "g"
+	}
+	// A す ending can be godan (話す) or ichidan (離す). Both exist; the
+	// ichidan reading is rarer, and the godan す row covers the common case.
+	if strings.HasSuffix(lemma, "す") {
+		return "g"
+	}
+	return "g"
+}
+
 // jaBuildConjIndex conjugates every verb and い-adjective in the lexicon
 // once. This is the second layer of plan.md §25: rather than guessing an
 // inflection backwards, the analyzer replays the forward tables.
@@ -925,6 +1003,7 @@ func AnalyzeJA(src string) *forest.MorphForest {
 // AnalyzeJAIn is AnalyzeJA with the ambient trace recorder, so the pipeline can
 // show the stage instead of running it invisibly (house rule 3).
 func AnalyzeJAIn(ctx context.Context, src string) *forest.MorphForest {
+	ensureConjIndex()
 	var span *trace.Span
 	if rec := trace.From(ctx); rec != nil {
 		span = rec.Open(trace.StageMorph, "Japanese morphology")

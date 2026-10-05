@@ -375,6 +375,24 @@ func (a *analyzer) predicate(c *syntax.Clause, forced map[string]string) (string
 	if id, sense := a.lookup(c); id != "" {
 		return id, sense
 	}
+	// An い-adjective can be the clause predicate on its own: 「この道は古い。」
+	// has no verb at all, and Japanese uses that construction constantly. The
+	// JLIR has a COPULA family precisely for it, and the adjective supplies the
+	// theme and the property being attributed.
+	//
+	// Without this the clause produced no event, the unknown-unit record got an
+	// EMPTY surface (because matrixSurface returned ""), and the sentence died
+	// with a diagnostic that pointed nowhere. On real prose this was the
+	// single largest silent failure.
+	if adj := a.matrixAdjective(c); adj != "" {
+		id := a.copulaSenseFor(c)
+		sense, _ := a.onto.Sense(id)
+		a.declarePredicate(sense)
+		c.Notes = append(c.Notes,
+			"predicate is the い-adjective "+adj+", realized through the copula sense "+id)
+		a.jb.G.Notes = append(a.jb.G.Notes, "adjective predicate "+adj+" -> "+id)
+		return id, sense
+	}
 	tok := a.matrixSurface(c)
 	a.jb.G.SourceFeat.Unknowns = append(a.jb.G.SourceFeat.Unknowns, jlir.UnknownUnit{
 		Surface: tok,
@@ -1604,4 +1622,35 @@ func applyEntityDecision(g *jlir.Graph, e *jlir.Entity, dist *jlir.Distribution,
 			ev.Args[role] = arg
 		}
 	}
+}
+
+// DefaultLexicon exposes the built lexicon for probing and tests.
+func DefaultLexicon() *lexicon.Lexicon { return lexicon.Default() }
+
+// matrixAdjective returns the clause's い-adjective when the clause predicate is
+// an adjective rather than a verb.
+func (a *analyzer) matrixAdjective(c *syntax.Clause) string {
+	if c == nil || c.Matrix == "" {
+		return ""
+	}
+	m := a.b.Morph(c.Matrix)
+	if m == nil {
+		return ""
+	}
+	if m.POS != forest.POSAdj {
+		return ""
+	}
+	if m.Feat("adj") != "i" && m.Feat("adj") != "" {
+		return ""
+	}
+	return m.Text(a.b.Source)
+}
+
+// copulaSenseFor picks the copula sense that matches the clause's register, so
+// that 「静かだ」 and 「静かです」 do not resolve to the same predicate.
+func (a *analyzer) copulaSenseFor(c *syntax.Clause) string {
+	if c != nil && c.Politeness != "" && c.Politeness != "plain" {
+		return "COPULA.03"
+	}
+	return "COPULA.01"
 }

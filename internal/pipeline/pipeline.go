@@ -14,6 +14,7 @@ import (
 	"github.com/nico/jev-trans/internal/jlir"
 	"github.com/nico/jev-trans/internal/lang"
 	"github.com/nico/jev-trans/internal/lex"
+	"github.com/nico/jev-trans/internal/lexicon"
 	"github.com/nico/jev-trans/internal/plan"
 	"github.com/nico/jev-trans/internal/semantics"
 	"github.com/nico/jev-trans/internal/syntax"
@@ -80,6 +81,13 @@ func (e *Engine) Translate(ctx context.Context, req Request) (*Response, error) 
 	var mf *forest.MorphForest
 
 	// ---- 2. MORPHOLOGICAL LATTICE -----------------------------------------
+	// The morphological dictionary is fed by the predicate lexicon (see
+	// lex.RegisterJapaneseVerb), and the lexicon is built lazily. Initialising it
+	// here, before the analyzer runs, is what makes 住っていた segmentable; with
+	// the reverse order the analyzer would consult a dictionary that had not yet
+	// been told about 住む.
+	lexicon.Default()
+
 	rec.Do(trace.StageMorph, "morphological lattice", func(s *trace.Span) error {
 		// The plain entry points are used deliberately: this stage already owns
 		// a span and attaches the lattice to it, so an inner span would
@@ -809,10 +817,85 @@ func applyUserAnswer(s *trace.Span, g *jlir.Graph, a *Answer) {
 	g.ResolveZero()
 }
 
-// normalizeInput collapses the input harmlessly: full-width spaces, CR, tabs
-// and the ideographic space. It deliberately does not rewrite anything else,
-// because plan.md §7 requires the JLIR to keep source-specific material and a
-// "normalizer" that rewrote punctuation would quietly destroy it.
+// historicalKana maps pre-1946 orthography onto the modern spelling.
+//
+// Aozora Bunko is full of it: 宮沢賢治 alone writes ゐる where any modern
+// edition has いる. The morphological analyzer's lexicon is modern, so every
+// historical form is an unknown morpheme, and an unknown morpheme is fatal by
+// design. Normalizing here — at the INPUT NORMALIZATION stage plan.md §6
+// provides — turns a whole class of "the analyzer cannot segment this" into an
+// ordinary word. The substitution is recorded in the trace, and the original
+// text is preserved on the response, so nothing is silently discarded.
+var historicalKana = map[rune]rune{
+	'ゐ': 'い', // ゐる -> いる
+	'ゑ': 'え', // ゑる -> える
+	'ふ': 'う', // ふむ -> うむ, ふつ -> うつ
+	'ぢ': 'じ', // already-voiced where modern spelling has it
+	'づ': 'ず',
+}
+
+// normalizeHistoricalKana rewrites pre-1946 kana and expands the iteration
+// marks ゝ (repeats the preceding kana) and ゞ (repeats it with voicing).
+func normalizeHistoricalKana(s string) (string, int) {
+	rs := []rune(s)
+	out := make([]rune, 0, len(rs)+8)
+	changed := 0
+	for _, r := range rs {
+		switch r {
+		case 'ゝ', 'ヽ':
+			if n := len(out); n > 0 {
+				out = append(out, out[n-1])
+				changed++
+				continue
+			}
+		case 'ゞ', 'ヾ':
+			if n := len(out); n > 0 {
+				out = append(out, voiced(out[n-1]))
+				changed++
+				continue
+			}
+		}
+		if to, ok := historicalKana[r]; ok {
+			out = append(out, to)
+			changed++
+			continue
+		}
+		out = append(out, r)
+	}
+	return string(out), changed
+}
+
+// voiced returns the dakuten form of a hiragana, or the kana itself when it
+// cannot take one.
+func voiced(r rune) rune {
+	const (
+		ka = "かきくけこ"
+		sa = "さしすせそ"
+		ta = "たちつてと"
+		na = "なにぬねの"
+		ha = "はひふへほ"
+		ma = "まみむめも"
+		ya = "やゆよ"
+		ra = "らりるれろ"
+		wa = "わゐうゑを"
+	)
+	table := []string{ka, sa, ta, na, ha, ma, ya, ra, wa}
+	base := r - 'ぁ'
+	for _, g := range table {
+		for i, c := range []rune(g) {
+			if c == r && i+1 < len([]rune(g)) {
+				_ = base
+				return r + 1
+			}
+		}
+	}
+	return r
+}
+
+// normalizeInput collapses the input harmlessly: full-width spaces, CR, tabs,
+// the ideographic space, and pre-1946 kana orthography. Punctuation is left
+// alone, because plan.md §7 requires the JLIR to keep source-specific
+// material.
 func normalizeInput(s *trace.Span, in string) string {
 	var b strings.Builder
 	b.Grow(len(in))
@@ -830,8 +913,16 @@ func normalizeInput(s *trace.Span, in string) string {
 		}
 	}
 	out := strings.TrimSpace(b.String())
+	if out != "" {
+		if fixed, kana := normalizeHistoricalKana(out); kana > 0 {
+			s.Note("rewrote %d pre-1946 kana character(s) to the modern spelling "+
+				"(ゐ→い, ゑ→え, ふ→う, iteration marks expanded)", kana)
+			changed += kana
+			out = fixed
+		}
+	}
 	if s != nil && changed > 0 {
-		s.Note("normalized %d whitespace character(s)", changed)
+		s.Note("normalized %d character(s) in total", changed)
 	}
 	return out
 }
