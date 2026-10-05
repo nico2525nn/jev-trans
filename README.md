@@ -165,7 +165,7 @@ confidence を受け取ります。自由記述の生成は行いません。候
 
 テキスト入力と出力だけではありません。パイプライン図、各段のスパン、
 形態素格子、節構造、JLIR グラフ、生成森と却下された枝とその理由、
-判断ログ、指示的状态を表示します。
+判断ログ、指示的状態を表示します。
 
 - 回路図は段落順に点灯し、各ノードに所要時間と状態を表示します
 - JLIR グラフは entity / event / 役割辺 / scope 帯を描画し、
@@ -218,67 +218,125 @@ internal/
 
 ## 現在の動作範囲
 
-### 動作を確認したもの
+### 達成目標と、そこからの距離
 
-- 18段の回路が双方向で実行され、各段が WebUI に描画されるトレースに記録される
-- 単純な他動詞節・自動詞節が双方向で翻訳でき、往復も一致する
+このシステムの目標は、**青空文庫の小振りな作品1冊を通しで翻訳すること**です。
+手作りの例ではなく実際の文章で測らないと、実用になるかどうかを
+判断できないためです。
 
-  | 入力 | 出力 | 状態 |
-  |---|---|---|
-  | 太郎が花子に本を渡した。 | Taro gave a book to Hanako. | LOSSY |
-  | 太郎は本を花子に渡しました | Taro gave a book to Hanako. | LOSSY |
-  | Taro gave a book to Hanako. | 太郎は本を花子に渡しましたね。 | LOSSY |
-  | She eats rice. | 彼女は米を食べますね。 | LOSSY |
-  | He drank water. | 彼は水を飲みましたね。 | LOSSY |
-  | 私は行きます。 | I go. | LOSSY |
-  | 彼女が来た。 | She came. | LOSSY |
+現在計測しているコーパスは宮沢賢治「秋田街道」1,898字・88文です。
 
-- **偽の保証が出ていません。** 解析できない述語は語彙化されず、候補は生成されず、
-  `UNPARSABLE` として報告されます。プレースホルダー語（`unknowns.` など）は
-  出力に一切現れません（`TestNoPlaceholderEverReachesTheOutput` で固定）。
-- 原文が支持しない性別が生成されることはありません
-- スコープの曖昧性は解決されず、`皆が帰らなかった` は2読みを保持します
-- 検証器のハードゲートは候補数に関係なく必ず実行されます
+```
+$ python3 tools/corpus.py ingest corpus/akita.txt
+$ python3 tools/corpus.py measure corpus/akita.txt --limit 88
+
+4/88 sentences translated (4%)
+
+   53  unresolved morpheme -> unknown predicate
+   30  no construction for predicate
+    1  predicate not in the lexicon
+```
+
+**つまり目標はまだ達成していません。** 88文のうち翻訳できたのは4文、率にして4%です。
+この数字を見やすく整えて書くことはしません。
+
+### 計測方法
+
+```sh
+python3 tools/corpus.py ingest corpus/akita.txt   # ルビ除去・文分割
+python3 tools/corpus.py measure corpus/akita.txt  # 文ごとに翻訳して失敗原因で集計
+python3 tools/baseline.py record > /tmp/b.json    # 回帰用スナップショット
+python3 tools/baseline.py compare /tmp/b.json
+```
+
+`measure` は失敗を原因ごとに束ねます。次の修正を「頻度で選ぶ」ためで、
+勘で直さないためです。
+
+### 実際に翻訳できるもの
+
+| 入力 | 出力 | 状態 |
+|---|---|---|
+| 太郎が花子に本を渡した。 | Taro gave a book to Hanako. | LOSSY |
+| 太郎は本を花子に渡しました | Taro gave a book to Hanako. | LOSSY |
+| Taro gave a book to Hanako. | 太郎は本を花子に渡しましたね。 | LOSSY |
+| She eats rice. | 彼女は米を食べますね。 | LOSSY |
+| He drank water. | 彼は水を飲みましたね。 | LOSSY |
+| 私は行きます。 | I go. | LOSSY |
+| 彼女が来た。 | She came. | LOSSY |
+
+**偽の保証は出ていません。** 解析できない述語は語彙化されず、候補は生成されず、
+`UNPARSABLE` として報告されます。プレースホルダー語（`unknowns.` など）は出力に
+一切現れません（`TestNoPlaceholderEverReachesTheOutput` で固定）。これは
+plan.md §22 の要求です。
+
+その他の固定されている性質:
+
+- 原文が支持しない性別が生成されることはない
+- スコープの曖昧性は解決されず、`皆が帰らなかった` は2読みを保持する
+- 検証器のハードゲートは候補数に関係なく必ず実行される
 - 形態素カバレッジは常に100%（未知語も1トークンとして保持）
-- `ー` を含む外来語（ビール、コーヒー、テーブル）が1形態素になります
-- 空・空白のみ・絵文字・句読点のみ・非言語混在で panic しません
+- `ー` を含む外来語（ビール、コーヒー、テーブル）が1形態素になる
+- 空白のみ・絵文字・句読点のみ・非言語混在で panic しない
 
-### 未対応・制約
+### コーパス測定で判明し、直したもの
 
-以下は実際の不足です。誇張せずに列挙します。
+実文を測るまで分からなかった問題がありました。いずれも原因は
+**アーキテクチャではなく、知識の欠落**でした。
 
-- **カバレッジが限定的**。ベンチの30例中13例が翻訳でき、残り17例は
-  `UNPARSABLE` です。以前は残り17例も誤った文を `EXACT` として出していたので
-  改善していますが、実用には距離があります。
-- **日本語の動詞形が限定的**。対象言語の動詞形選択は辞書と構築ライブラリに
-  依存しており、`来る` の一部形が `きました` のように選ばれる場合があります。
-- **英語→日本語の開辞彙が薄い**。名詞約400語と閉じた類のみ。英語再構文解析
-  が `UNKNOWN` を返す語は候補が却下されます。
-- **命令・義務の枠**（`Taro should read a book.`）は生成的でないため
-  対応していません。
-- **量化詞**。`全員が帰らなかった` の `ALL` は失われます。
-- **二節文**。ので/ば/けど などで連結された文は `UNPARSABLE` です。
-- **判断モデルの実API未検証**。クライアントは `systemone` の仕様どおりに
-  実装され、prior へ劣化する経路は動作しますが、この環境には
-  `OPENCODE_API_KEY` がないため実APIへのリクエストは行っていません。
+| 問題 | 実測された症状 | 対処 |
+|---|---|---|
+| 旧仮名遣い | 宮沢は `ゐる` と書く。現行辞書には `いる` しか無い | §6 の入力正規化段で `ゐ→い` `ゑ→え` `ふ→う` と反復記号を展開。書き換えはトレースに記録 |
+| 辞書の二重性 | 述語辞書241語と形態素辞書836語が別物。片方にしか無い動詞は分割不能で `住っていた` が `住っ/て/いた` に崩れた | 述語辞書が `lex.RegisterJapaneseVerb` を通じて解析器に動詞を供給。活用級は綴りから推定 |
+| い形容詞述語 | `この道は古い。` には動詞が無い。文が丸ごと死に、診断が空文字になった | COPULA 系で解決。register で sense を選ぶ |
+| 過剰に厳しい役割検査 | 時制・様式の付随語をフレームが持てないだけで文を却下 | 核心項の脱落は致命的のまま。付随語は許容 |
+| polite 形と copula | です/ます/ました/ましてが辞書に無く、COPULA.03/.05 に英語構築も無かった | 両方追加 |
+
+### まだ足りていないもの
+
+コーパスでの出現頻度順です。
+
+1. **動詞の活用カバレッジ**。`っ` の音便（`住んでいた` → `住っていた`）が未処理。
+   述語辞書に無い動詞が約60語残っています。
+2. **名詞のカバレッジ**。`見草` `雲` `沢` など、この作品の地名群が未収録で、
+   それらが主語・目的語になる文は生成できません。
+3. **英語構築**。頻出 sense の一部に対応する構築がまだありません。
+4. **命令・義務の枠**。`Taro should read a book.` は扱っていません。
+5. **量化詞**。`全員が帰らなかった` の `ALL` は失われます。
+6. **二節文**。ので/ば/けど などで連結された文は `UNPARSABLE` です。
+7. **判断モデルの実API未検証**。クライアントは `systemone` の仕様どおりに
+   実装され、prior へ劣化する経路は動作しますが、この環境には
+   `OPENCODE_API_KEY` がないため実APIへのリクエストは行っていません。
+
+### 構造的な欠陥：劣化経路が無い
+
+これは機能不足ではなく、設計の問題です。
+
+未知の語が1つあると、その文は丸ごとゼロになります。「捏造しない」と
+「何も出さない」が同じコードパスだからです。88文のうち84文が、文中の
+1語を処理できないという理由だけで落ちています。
+
+plan.md が要求する「臆測しない」を守る正しい方法は、解析できた部分は訳し、
+訳せなかった箇所を明示的にマークして返すことです。現在はその中間状態が存在しません。
+これを追加するのが、到達率を一番動かす変更になります。語彙を増やすのとは
+別の、そして構造的な作業です。
 
 ### テスト
 
-`go test ./...` で7パッケージ・約1,900行のテストが走ります。plan.md の
-約束を直接固定しています。
+`go test ./...` で7パッケージ・約2,000行が走ります。実装ではなく
+plan.md の約束を固定しています。
 
 | テスト | 固定する約束 |
 |---|---|
-| `TestNoPlaceholderEverReachesTheOutput` | プレースホルダー語が/absent でないこと |
+| `TestNoPlaceholderEverReachesTheOutput` | プレースホルダー語が出ないこと |
 | `TestUnresolvedPredicateIsReportedNotGuessed` | 未解決述語は `UNPARSABLE` |
-| `TestEveryCircuitStageRuns` | plan.md §6 の18段が全て走ること |
-| `TestNoGenderIsInvented` | plan.md §4 / §22 |
+| `TestEveryCircuitStageRuns` | §6 の18段が全て走ること |
+| `TestNoGenderIsInvented` | §4 / §22 |
 | `TestMorphemeCoverageIsTotal` | 文字が脱落しないこと |
 | `TestKatakanaLoanwordIsOneToken` | `ー` による外来語の分裂 |
-| `TestScopeAmbiguitySurvivesAnalysis` | plan.md §13 |
+| `TestScopeAmbiguitySurvivesAnalysis` | §13 |
 | `TestScopeRepresentationsAgree` | スコープ重みの二重表現の不一致 |
 | `TestVerifyIsIdempotentOnIdenticalGraphs` | 検証器の較正 |
-| `TestRealizeIsIndependentlyExercisable` | plan.md §36 を単独実行できること |
+| `TestRealizeIsIndependentlyExercisable` | §36 を単独実行できること |
 | `TestNoPanicOnHostileInput` | 堅牢性 |
 
 ---
