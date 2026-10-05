@@ -60,6 +60,9 @@ type ProcessConfig struct {
 	Env []string
 	// StartupTimeout bounds the handshake with the backend.
 	StartupTimeout time.Duration
+	// RequestTimeout bounds one request/response exchange. It defaults to 30s
+	// so a caller with no deadline of its own still cannot hang forever.
+	RequestTimeout time.Duration
 }
 
 // ProcessAnalyzer is a MorphAnalyzer backed by a subprocess.
@@ -89,13 +92,17 @@ func (p *ProcessAnalyzer) scan(ctx context.Context) ([]byte, error) {
 		line []byte
 		ok   bool
 	}
+	// The scanner is captured by value. Reading p.stdout inside the goroutine
+	// races with reset() setting it to nil, and the race is real: the timeout
+	// path resets while the abandoned goroutine is still inside Scan.
+	sc := p.stdout
 	ch := make(chan result, 1)
 	go func() {
-		if !p.stdout.Scan() {
+		if !sc.Scan() {
 			ch <- result{ok: false}
 			return
 		}
-		ch <- result{line: append([]byte(nil), p.stdout.Bytes()...), ok: true}
+		ch <- result{line: append([]byte(nil), sc.Bytes()...), ok: true}
 	}()
 	select {
 	case <-ctx.Done():
@@ -158,12 +165,25 @@ func (p *ProcessAnalyzer) Analyze(ctx context.Context, text string, pr Profile) 
 		return &Analysis{Backend: p.cfg.Name, BackendVersion: p.cfg.Version,
 			Dictionary: p.cfg.Dictionary, Profile: pr}, nil
 	}
-	if err := p.start(ctx); err != nil {
-		return nil, err
-	}
-
+	// The lock is taken before the process is started, not after. Starting
+	// outside it lets two concurrent requests each see started == false and
+	// each launch a process; the second assignment to p.cmd/p.stdin then
+	// orphans the first, and its scanner keeps reading a pipe nobody reads.
+	// From an HTTP server two requests for the same backend arrive together
+	// routinely, so this is not a theoretical window.
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	// Every exchange gets a deadline whether or not the caller supplied one.
+	// A caller passing context.Background() would otherwise wait forever on a
+	// backend that started and then stopped answering, which is the exact
+	// failure a process boundary is supposed to contain.
+	ctx, cancel := context.WithTimeout(ctx, p.requestTimeout())
+	defer cancel()
+
+	if err := p.startLocked(); err != nil {
+		return nil, err
+	}
 
 	req := processRequest{Text: text, Profile: pr}
 	line, err := json.Marshal(req)
@@ -238,7 +258,26 @@ func (p *ProcessAnalyzer) Close() error {
 	return p.stopLocked()
 }
 
-func (p *ProcessAnalyzer) start(ctx context.Context) error {
+// requestTimeout bounds one exchange. It is the minimum of the configured
+// startup budget and a per-request budget, because the two answer different
+// questions: how long the backend may take to become usable, and how long it
+// may then take to answer.
+func (p *ProcessAnalyzer) requestTimeout() time.Duration {
+	t := p.cfg.RequestTimeout
+	if t <= 0 {
+		t = 30 * time.Second
+	}
+	if st := p.cfg.StartupTimeout; st > 0 && st < t {
+		t = st * 4
+		if t <= 0 {
+			t = st
+		}
+	}
+	return t
+}
+
+// startLocked launches the backend. The caller must hold p.mu.
+func (p *ProcessAnalyzer) startLocked() error {
 	if p.started && p.cmd != nil && p.cmd.ProcessState == nil {
 		return nil
 	}

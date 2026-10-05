@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/nico/jev-trans/internal/lang"
 )
@@ -224,4 +226,62 @@ func (p profileOnlyBackend) Analyze(_ context.Context, text string, _ Profile) (
 		Backend: p.name, BackendVersion: "1",
 		Tokens: []Token{{Surface: text, Lemma: text, Start: 0, End: len([]rune(text)), POS: []string{"名詞"}}},
 	}, nil
+}
+
+// TestProcessBackendSerialisesConcurrentRequests is the regression test for a
+// double-start: Analyze used to launch the process before taking the lock, so
+// two simultaneous requests each started one and the second overwrote p.cmd and
+// p.stdin, orphaning the first process and its scanner. From an HTTP server two
+// requests for the same backend arrive together routinely.
+//
+// Run with -race.
+func TestProcessBackendSerialisesConcurrentRequests(t *testing.T) {
+	cfg := SudachiConfig("core")
+	if !Available(cfg.Command) {
+		t.Skip("python3 is not available")
+	}
+	p := NewProcessAnalyzer(cfg)
+	defer p.Close()
+	if _, err := p.Analyze(context.Background(), "私は行きます。", ProfileModern); err != nil {
+		t.Skipf("sudachi is not usable here: %v", err)
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, 6)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = p.Analyze(context.Background(), "今日はいい天気ですね。", ProfileModern)
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("concurrent request %d failed: %v", i, err)
+		}
+	}
+}
+
+// TestProcessBackendRespectsItsOwnDeadline covers the case where the caller
+// supplies no deadline at all. The backend must not be able to hold the
+// translation open forever, which is the whole reason for the process boundary.
+func TestProcessBackendRespectsItsOwnDeadline(t *testing.T) {
+	p := NewProcessAnalyzer(ProcessConfig{
+		// A command that accepts its input and never answers.
+		Command:        "python3",
+		Args:           []string{"-c", "import sys\nfor line in sys.stdin:\n    pass\n"},
+		Name:           "silent",
+		StartupTimeout: 5 * time.Second,
+		RequestTimeout: 2 * time.Second,
+	})
+	defer p.Close()
+	start := time.Now()
+	_, err := p.Analyze(context.Background(), "テスト", ProfileModern)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Skip("the silent backend answered; nothing to assert")
+	}
+	if elapsed > 8*time.Second {
+		t.Errorf("waited %v, want the exchange abandoned near the 2s request timeout", elapsed)
+	}
 }
