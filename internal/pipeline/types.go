@@ -209,7 +209,17 @@ type StageMetrics struct {
 	// CertifiedCandidates proved equivalence: no hard diff, no unsupported
 	// information, no unresolved reading left open.
 	CertifiedCandidates int `json:"certifiedCandidates"`
-	Selected            int `json:"selected"`
+	// ShortlistedCandidates is the size of the list the output stage chose from.
+	// It is the same number as EligibleCandidates today and is named separately
+	// because the two answer different questions: how many survived, and how
+	// many were on the table when one was picked.
+	ShortlistedCandidates int `json:"shortlistedCandidates"`
+	// Selected counts the candidates the response actually returns, which is at
+	// most one. It used to be the length of the shortlist, which agreed with the
+	// response only while no sentence produced two survivors — and the first
+	// one that did would have made this table disagree with the reply to the
+	// same request.
+	Selected int `json:"selected"`
 
 	// OpenPositions counts ambiguity carried unresolved into the target, which
 	// is plan.md section 13 and 15 doing their job rather than a defect.

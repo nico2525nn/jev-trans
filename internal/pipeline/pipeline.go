@@ -1160,9 +1160,26 @@ func stageMetrics(
 
 	m.RawCandidates = len(raw)
 	m.AcceptedCandidates = len(accepted)
-	m.Selected = len(accepted)
 	m.EligibleCandidates = len(accepted)
 	m.CertifiedCandidates = 0
+	// Selected is what came out, and the output stage takes exactly one
+	// candidate:
+	//
+	//	if len(candidates) > 0 { best := candidates[0]; Selected = &best }
+	//
+	// Reporting len(accepted) here made the metric claim that three candidates
+	// were selected when one was. It happened to agree on this corpus only
+	// because every sentence that reached the gate so far had exactly one
+	// survivor; the first sentence with two would have made the stage table
+	// disagree with the response the same request returned.
+	//
+	// The size of the shortlist that survived is EligibleCandidates, which is
+	// what the number is really measuring and already says.
+	m.Selected = 0
+	if len(accepted) > 0 {
+		m.Selected = 1
+	}
+	m.ShortlistedCandidates = len(accepted)
 	for _, c := range accepted {
 		if candidateCertified(c) {
 			m.CertifiedCandidates++

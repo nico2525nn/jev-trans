@@ -12,6 +12,12 @@ stage from the response JSON and got four things wrong:
   - candidates and verified were both read from the post-gate result, so they
     were the same number by construction.
 
+The row labelled "verification passed" is now "equivalence proved" and reads
+`certifiedCandidates`. Passing the hard gate and proving equivalence are
+different claims: a candidate the verifier merely declined to reject is
+eligible, not certified. The two are reported on separate lines below and must
+not be read as one number.
+
 Each of those made the next fix a guess. The pipeline now reports what it
 actually did, cumulatively, and this script only sums it.
 
@@ -37,8 +43,19 @@ STAGES = [
     ("semantic frame resolved", "framesComplete"),
     ("construction available", "constructionsComplete"),
     ("candidate generated", "rawCandidates", "positive"),
-    ("verification passed", "verified", "positive"),
+    # `verified` is the legacy alias of `certifiedCandidates` and counts
+    # candidates whose equivalence was PROVED. It is not "passed verification":
+    # passing the semantic hard gate and proving equivalence are different
+    # claims, and the label used to conflate them.
+    ("equivalence proved", "certifiedCandidates", "positive"),
 ]
+
+# The candidate counts, printed separately and never summed. raw is what the
+# realizer produced; eligible is what survived the hard gate; certified is what
+# the verifier actually proved; shortlisted is the list the output stage chose
+# from; selected is what came out, which is at most one.
+FUNNEL_KEYS = ("rawCandidates", "eligibleCandidates", "certifiedCandidates",
+               "shortlistedCandidates", "selected")
 
 
 def measure(sentence):
@@ -77,7 +94,7 @@ def main():
 
     counts = {name: 0 for name, *_ in STAGES}
     tokens = opaque = 0
-    raw = eligible = certified = selected = 0
+    raw = eligible = certified = shortlisted = selected = 0
     reached_verb = 0
     missing_metrics = 0
     examples = {}
@@ -96,6 +113,7 @@ def main():
         raw += m.get("rawCandidates", 0)
         eligible += m.get("eligibleCandidates", 0)
         certified += m.get("certifiedCandidates", 0)
+        shortlisted += m.get("shortlistedCandidates", m.get("eligibleCandidates", 0))
         selected += m.get("selected", 0)
         for why in m.get("frameLosses") or []:
             losses[why] = losses.get(why, 0) + 1
@@ -131,10 +149,15 @@ def main():
 
     ratio = (opaque / tokens * 100) if tokens else 0.0
     print(f"\n  opaque surfaces           {opaque}/{tokens} = {ratio:.1f}%")
-    print(f"  raw candidates           {raw}")
-    print(f"  eligible (gate passed)   {eligible}")
-    print(f"  certified (proved)       {certified}")
-    print(f"  selected                 {selected}")
+    totals = dict(zip(FUNNEL_KEYS, (raw, eligible, certified, shortlisted, selected)))
+    for label, value in (
+        ("raw candidates", totals["rawCandidates"]),
+        ("eligible (gate passed)", totals["eligibleCandidates"]),
+        ("certified (proved)", totals["certifiedCandidates"]),
+        ("shortlisted", totals["shortlistedCandidates"]),
+        ("selected", totals["selected"]),
+    ):
+        print(f"  {label:<24} {value}")
     print(f"  dropped by the gate      {raw - eligible}")
     if losses:
         print("\n  why arguments were lost")

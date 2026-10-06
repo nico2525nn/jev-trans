@@ -414,7 +414,8 @@
       ['raw candidates', num(m.rawCandidates, 0)],
       ['eligible (passed the hard gate)', num(m.eligibleCandidates, 0)],
       ['certified (equivalence proved)', num(m.certifiedCandidates, 0)],
-      ['selected', num(m.selected, 0)]
+      ['shortlisted', num(m.shortlistedCandidates, num(m.eligibleCandidates, 0))],
+      ['selected', num(m.selected, 0) + ' of 1']
     ].map(function (r) {
       return h('div', { class: 'row' }, [
         h('div', { class: 'row-main' }, h('div', { class: 'row-main-text', text: r[0] })),
@@ -424,7 +425,8 @@
     funnel.appendChild(h('p', {
       class: 'faint',
       text: 'passing the gate and proving equivalence are different claims; a candidate the ' +
-        'verifier merely declined to reject is eligible, not certified'
+        'verifier merely declined to reject is eligible, not certified. The response returns ' +
+        'one candidate, so selected is at most 1 — shortlisted is how many it chose from.'
     }));
     body.appendChild(h('p', { class: 'faint', text: 'candidate funnel' }));
     body.appendChild(funnel);
