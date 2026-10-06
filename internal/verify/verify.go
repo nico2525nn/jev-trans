@@ -808,28 +808,43 @@ func (v *verifier) compareRoles(p eventPair, item string) {
 // equivalence classes run first: an explicit source pronoun realized as a
 // Japanese zero is correct, and §42 exists so that natural realizations survive
 // verification instead of being discarded by a literal string comparison.
-// roleAliases groups semantic roles that occupy the same argument position in
-// Japanese and English. Japanese marks a topic with は and a subject with が,
-// and the normalizer routes a は-phrase through the predicate frame to
-// whichever role it admits first; English puts that entity in subject position
-// and labels it agent. The label differs while the proposition is identical,
-// which is exactly the difference plan.md §42 says must not throw away a
-// natural translation.
-var roleAliases = map[string][]string{
-	jlir.RoleAgent:       {jlir.RolePatient, jlir.RoleTheme, jlir.RoleExperiencer},
-	jlir.RolePatient:     {jlir.RoleAgent, jlir.RoleTheme, jlir.RoleExperiencer},
-	jlir.RoleTheme:       {jlir.RoleAgent, jlir.RolePatient, jlir.RoleExperiencer},
-	jlir.RoleExperiencer: {jlir.RoleAgent, jlir.RolePatient, jlir.RoleTheme},
-	jlir.RoleRecipient:   {jlir.RoleGoal},
-	jlir.RoleGoal:        {jlir.RoleRecipient},
-}
+// roleAliases maps a source role onto the roles the target may use for the same
+// referent.
+//
+// It is empty by default, and that is a correction rather than an omission.
+// The previous table treated agent, patient, theme and experiencer as
+// interchangeable, which let a full argument swap pass: a source with
+// agent=Taro, patient=Hanako and a target with agent=Hanako, patient=Taro matched
+// each role to the other's entity, every pair "renamed" rather than changed, and
+// the "target introduces an argument" check never fired because both roles were
+// already present.
+//
+// The distinction it conflated is surface grammar against semantic role. Japanese
+// marking a topic with は and English putting that entity in subject position is
+// a difference in the SURFACE language, and it belongs in the semantic layer
+// that normalizes both sides into the same role before anything is compared. By
+// the time two graphs reach the verifier, the roles are meant to mean the same
+// thing, and a mismatch is a real defect.
+//
+// A sense-specific entry is the right way to widen this — "for TRANSFER.01 a
+// recipient and a goal-of-transfer are the same argument" — and it belongs in
+// the ontology next to the frame that licenses it, not in a global table here.
+var roleAliases = map[string][]string{}
 
-// aliasedRole finds the role the target actually used for the same referent.
+// aliasedRole finds the role the target actually used for the same referent,
+// which is only ever a role the ontology says is equivalent.
 func (v *verifier) aliasedRole(p eventPair, srcRole string, se *jlir.Entity) (jlir.Arg, string, bool) {
 	if se == nil {
 		return jlir.Arg{}, "", false
 	}
+	claimed := map[string]bool{}
+	for _, r := range p.tgt.OrderArgs() {
+		claimed[r] = true
+	}
 	for _, cand := range roleAliases[srcRole] {
+		if !claimed[cand] {
+			continue
+		}
 		ta, ok := p.tgt.Arg(cand)
 		if !ok {
 			continue
@@ -838,6 +853,9 @@ func (v *verifier) aliasedRole(p eventPair, srcRole string, se *jlir.Entity) (jl
 		if te == nil || !sameReferent(v.src, v.tgt, se, te) {
 			continue
 		}
+		// One target role satisfies one source role. Without this a swap is two
+		// consistent renamings rather than one defect.
+		claimed[cand] = false
 		return ta, cand, true
 	}
 	return jlir.Arg{}, "", false

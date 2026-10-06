@@ -251,6 +251,18 @@ func enNPPlan(r Request, p *Projection, gp genderPolicy, ev *jlir.Event, role st
 
 	// --- noun -------------------------------------------------------------
 	np.Noun = nounFor(g, e, lang.EN, p, ev.ID)
+	// A name takes no article. Trusting the analyser's part of speech here
+	// produces "A Taro", because both analysers report a personal name as an
+	// ordinary noun.
+	if r.IsName != nil && e != nil {
+		for _, a := range e.Aliases {
+			if a.Lang == r.Source && r.IsName(a.Surface, a.Lang) {
+				e.Proper = true
+				np.Proper = true
+				break
+			}
+		}
+	}
 	if np.Noun == "" {
 		if n := aliasFor(g, e, lang.EN); n != "" {
 			np.Noun = n

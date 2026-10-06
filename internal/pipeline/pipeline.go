@@ -454,6 +454,7 @@ func (e *Engine) planRequest(ctx context.Context, req Request, g *jlir.Graph, de
 		Style:      req.Style,
 		Ctx:        ctx,
 		Lexicalize: e.lexicalize,
+		IsName:     e.lex.IsProperName,
 		Resolve: func(stage, slot string, options []string, prior jlir.Distribution) (string, float64, string) {
 			for _, d := range decisions {
 				if d == nil || d.Source == jev.SourceSkipped {
@@ -511,11 +512,21 @@ func (e *Engine) analyzeJapanese(ctx context.Context, s *trace.Span, text string
 // because the lexeme table says so, and a word the table does not cover
 // returns ok=false so the planner files a lexical gap rather than inventing a
 // word (plan.md §10, §51).
+//
+// The surface is tried in the table its kind suggests and then in the other one.
+// 太郎 lives in the name table, but whether the analysis marked the entity
+// proper is a separate decision that may not have been made, and guessing wrong
+// leaves the referent unrealized and the sentence unsayable.
 func (e *Engine) lexicalize(surface string, src, tgt lang.Lang, typ string, proper bool) (string, bool) {
 	if surface == "" {
 		return "", false
 	}
-	return e.lex.Form(surface, src, tgt, typ, proper)
+	for _, asProper := range []bool{proper, !proper} {
+		if v, ok := e.lex.Form(surface, src, tgt, typ, asProper); ok && v != "" {
+			return v, true
+		}
+	}
+	return "", false
 }
 
 // slotMatches reports whether a recorded decision speaks for this slot.

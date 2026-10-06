@@ -433,6 +433,15 @@ func applyJapaneseFeatures(feats map[string]string, pos []string, surface string
 		if t, ok := tenseMarkers[el]; ok && t != "" && feats["tense"] == "" {
 			feats["tense"] = t
 		}
+		// A case particle. The core reads Morph.Case(), which is how the clause
+		// parser knows that 太郎が carries a subject marker at all, and Sudachi
+		// reports it only as 助詞-格助詞 with no case feature. Without this,
+		// every argument of an externally analysed sentence silently fell out of
+		// the clause: 「太郎が花子に本を渡した」 came out with one theme and no
+		// agent and no recipient.
+		if isCaseParticleSurface(surface) && feats["case"] == "" {
+			feats["case"] = canonicalCaseMarker(surface)
+		}
 		for pre, val := range tenseOfConj {
 			if strings.HasPrefix(el, pre) && feats["tense"] == "" {
 				feats["tense"] = val
@@ -443,3 +452,25 @@ func applyJapaneseFeatures(feats map[string]string, pos []string, surface string
 		feats["tense"] = "past"
 	}
 }
+
+// japaneseCaseParticles maps the surface of a Japanese case particle onto the
+// marker the core uses. The core keys on the romanised marker because the
+// builtin analyser emits that; an external analyser emits the surface, and
+// translating it here is what keeps both backends interchangeable.
+var japaneseCaseParticles = map[string]string{
+	"が": "ga", "で": "de", "に": "ni", "へ": "he", "と": "to",
+	"も": "mo", "の": "no", "や": "ya", "か": "ka", "ね": "ne",
+	"から": "kara", "まで": "made", "より": "yori", "ほど": "hodo",
+}
+
+// isCaseParticleSurface reports whether the token is one of them. Two-character
+// markers are checked first because から and まで contain one.
+func isCaseParticleSurface(surface string) bool {
+	if _, ok := japaneseCaseParticles[surface]; ok {
+		return true
+	}
+	return false
+}
+
+// canonicalCaseMarker returns the core's marker for a particle surface, or "".
+func canonicalCaseMarker(surface string) string { return japaneseCaseParticles[surface] }

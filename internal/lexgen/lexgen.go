@@ -303,3 +303,31 @@ func Stats(l *Lexicalizer) map[string]int {
 		"nounCollisions": len(l.collisions),
 	}
 }
+
+// IsProperName reports whether the surface is registered as a proper name in the
+// given language.
+//
+// The English determiner chooser needs this and cannot get it from the entity's
+// Proper flag: that flag comes from the analyser's part of speech, and both the
+// builtin analyser and Sudachi report a personal name as an ordinary noun
+// (太郎 is 名詞,普通名詞 to Sudachi), so "A Taro" is what a determiner attached
+// on the wrong assumption of common-noun status produces.
+func (l *Lexicalizer) IsProperName(surface string, l2 lang.Lang) bool {
+	switch l2 {
+	case lang.JA:
+		if _, ok := l.names[surface]; ok {
+			return true
+		}
+		if _, ok := l.enName[surface]; ok {
+			return true
+		}
+	default:
+		if _, ok := l.enName[surface]; ok {
+			return true
+		}
+		if _, ok := l.names[surface]; ok {
+			return true
+		}
+	}
+	return false
+}

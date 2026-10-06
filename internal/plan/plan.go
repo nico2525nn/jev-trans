@@ -62,6 +62,12 @@ type Request struct {
 	// say "book" for 本 or "Taro" for 太郎, and must refuse to emit a target
 	// surface rather than borrowing the source script (plan.md §10, §51).
 	Lexicalize Lexicalizer
+	// IsName reports whether a source surface is a proper name. The English
+	// determiner needs it and cannot get it from the entity's Proper flag,
+	// because both analysers report a personal name such as 太郎 as an ordinary
+	// noun, and "A Taro" is what a determiner attached on that assumption
+	// produces.
+	IsName func(surface string, l lang.Lang) bool
 }
 
 // Lexicalizer maps a source surface onto a target one. ok=false is the normal
@@ -789,8 +795,16 @@ func lexicalize(p *Projection, g *jlir.Graph, e *jlir.Entity, l lang.Lang) strin
 		if surf == "" {
 			continue
 		}
-		if v, ok := p.lex(surf, src, l, e.Type, e.Proper); ok && v != "" {
-			return v
+		// The surface is tried in the table its kind suggests and then in the
+		// other one. 太郎 is a name and lives in the name table, but whether
+		// the analysis marked the entity proper is a separate decision that may
+		// not have been made; guessing wrong here leaves the referent
+		// unrealized and the sentence unsayable, which is strictly worse than
+		// trying both tables.
+		for _, proper := range []bool{e.Proper, !e.Proper} {
+			if v, ok := p.lex(surf, src, l, e.Type, proper); ok && v != "" {
+				return v
+			}
 		}
 	}
 	return ""
