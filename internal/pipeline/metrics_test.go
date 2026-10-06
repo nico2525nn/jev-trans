@@ -3,8 +3,8 @@ package pipeline_test
 import (
 	"testing"
 
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/pipeline"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/pipeline"
 )
 
 // The stage table must describe the response it travelled in.

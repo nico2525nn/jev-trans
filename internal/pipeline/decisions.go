@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/nico/jev-trans/internal/discourse"
-	"github.com/nico/jev-trans/internal/jev"
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/semantics"
-	"github.com/nico/jev-trans/internal/trace"
+	"github.com/nico2525nn/jev-trans/internal/discourse"
+	"github.com/nico2525nn/jev-trans/internal/jev"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/semantics"
+	"github.com/nico2525nn/jev-trans/internal/trace"
 )
 
 // This file is the single decision layer of the pipeline: the ten nodes of

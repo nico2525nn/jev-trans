@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/lexicon"
-	"github.com/nico/jev-trans/internal/pipeline"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lexicon"
+	"github.com/nico2525nn/jev-trans/internal/pipeline"
 )
 
 // 現れる is the right subject for this test: the morphological analyser knows

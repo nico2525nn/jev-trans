@@ -24,7 +24,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // POS is a coarse part of speech normalized across both languages so the

@@ -17,9 +17,9 @@ package syntax
 import (
 	"sort"
 
-	"github.com/nico/jev-trans/internal/forest"
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/forest"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // Conjoin labels the relation of a clause to the one before it.

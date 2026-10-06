@@ -1,6 +1,6 @@
 package lex
 
-import "github.com/nico/jev-trans/internal/forest"
+import "github.com/nico2525nn/jev-trans/internal/forest"
 
 // This file is the English open-class noun lexicon.
 //

@@ -13,10 +13,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nico/jev-trans/internal/forest"
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/lexicon"
+	"github.com/nico2525nn/jev-trans/internal/forest"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lexicon"
 )
 
 // scanSourceFeatures walks the bundle once and records the layer-7 material that

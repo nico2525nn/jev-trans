@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // TestProcessBackendSpeaksToTheRealAdapter is skipped when sudachipy or a

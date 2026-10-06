@@ -20,10 +20,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nico/jev-trans/internal/forest"
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/syntax"
+	"github.com/nico2525nn/jev-trans/internal/forest"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/syntax"
 )
 
 // SpeechStyle values. They are named so the UI can render them directly and so

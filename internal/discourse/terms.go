@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // Term is one entry of the terminology memory (plan.md §52): a source term, the

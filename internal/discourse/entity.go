@@ -29,8 +29,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // UnknownOption is the label the referential layer reserves for "not one of the

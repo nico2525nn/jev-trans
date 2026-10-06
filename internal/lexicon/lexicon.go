@@ -27,8 +27,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/nico/jev-trans/internal/lex"
-	"github.com/nico/jev-trans/internal/ontology"
+	"github.com/nico2525nn/jev-trans/internal/lex"
+	"github.com/nico2525nn/jev-trans/internal/ontology"
 )
 
 // SenseHit is one weighted sense candidate for a surface form.

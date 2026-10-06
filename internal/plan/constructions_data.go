@@ -53,8 +53,8 @@ package plan
 // recipient_defined, source_defined, speech_act.
 
 import (
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // Fluent setters keep the table below readable.

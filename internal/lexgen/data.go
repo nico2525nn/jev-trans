@@ -1,6 +1,6 @@
 package lexgen
 
-import "github.com/nico/jev-trans/internal/lang"
+import "github.com/nico2525nn/jev-trans/internal/lang"
 
 // jaNouns maps the high-frequency Japanese common nouns whose sense the analyzer
 // resolves onto their English lexeme.

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/nico/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
 )
 
 // Anaphora is the state of one zero argument (plan.md §15):

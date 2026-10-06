@@ -15,8 +15,8 @@ package semantics
 import (
 	"strings"
 
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/syntax"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/syntax"
 )
 
 // quantOperator classifies a quantifier string into a scope operator kind.

@@ -16,8 +16,8 @@ package verify
 import (
 	"strings"
 
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // ClassID names one equivalence class. The values are stable because the WebUI

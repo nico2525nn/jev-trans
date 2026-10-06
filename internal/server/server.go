@@ -18,12 +18,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nico/jev-trans/internal/jev"
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/lexicon"
-	"github.com/nico/jev-trans/internal/ontology"
-	"github.com/nico/jev-trans/internal/pipeline"
-	"github.com/nico/jev-trans/internal/plan"
+	"github.com/nico2525nn/jev-trans/internal/jev"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lexicon"
+	"github.com/nico2525nn/jev-trans/internal/ontology"
+	"github.com/nico2525nn/jev-trans/internal/pipeline"
+	"github.com/nico2525nn/jev-trans/internal/plan"
 )
 
 // webFS holds the WebUI. The UI sources live under internal/server/web so

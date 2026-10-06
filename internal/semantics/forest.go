@@ -19,11 +19,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/lexicon"
-	"github.com/nico/jev-trans/internal/ontology"
-	"github.com/nico/jev-trans/internal/syntax"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lexicon"
+	"github.com/nico2525nn/jev-trans/internal/ontology"
+	"github.com/nico2525nn/jev-trans/internal/syntax"
 )
 
 // maxReadings bounds the forest. plan.md §32 caps an oracle question at 255

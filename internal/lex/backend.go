@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nico/jev-trans/internal/forest"
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/forest"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // The morphological backend contract.

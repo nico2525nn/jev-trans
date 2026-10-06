@@ -1,3 +1,3 @@
-module github.com/nico/jev-trans
+module github.com/nico2525nn/jev-trans
 
-go 1.26
+go 1.24

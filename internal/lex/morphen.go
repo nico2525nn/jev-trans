@@ -20,9 +20,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/nico/jev-trans/internal/forest"
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/trace"
+	"github.com/nico2525nn/jev-trans/internal/forest"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/trace"
 )
 
 // --- analysis units ------------------------------------------------------

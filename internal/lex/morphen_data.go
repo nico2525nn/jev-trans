@@ -16,7 +16,7 @@ package lex
 import (
 	"strings"
 
-	"github.com/nico/jev-trans/internal/forest"
+	"github.com/nico2525nn/jev-trans/internal/forest"
 )
 
 // --- feature helpers -----------------------------------------------------

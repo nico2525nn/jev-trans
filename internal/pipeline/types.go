@@ -10,19 +10,19 @@ package pipeline
 import (
 	"sync"
 
-	"github.com/nico/jev-trans/internal/discourse"
-	"github.com/nico/jev-trans/internal/forest"
-	"github.com/nico/jev-trans/internal/jev"
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/lex"
-	"github.com/nico/jev-trans/internal/lexgen"
-	"github.com/nico/jev-trans/internal/lexicon"
-	"github.com/nico/jev-trans/internal/plan"
-	"github.com/nico/jev-trans/internal/semantics"
-	"github.com/nico/jev-trans/internal/syntax"
-	"github.com/nico/jev-trans/internal/trace"
-	"github.com/nico/jev-trans/internal/verify"
+	"github.com/nico2525nn/jev-trans/internal/discourse"
+	"github.com/nico2525nn/jev-trans/internal/forest"
+	"github.com/nico2525nn/jev-trans/internal/jev"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lex"
+	"github.com/nico2525nn/jev-trans/internal/lexgen"
+	"github.com/nico2525nn/jev-trans/internal/lexicon"
+	"github.com/nico2525nn/jev-trans/internal/plan"
+	"github.com/nico2525nn/jev-trans/internal/semantics"
+	"github.com/nico2525nn/jev-trans/internal/syntax"
+	"github.com/nico2525nn/jev-trans/internal/trace"
+	"github.com/nico2525nn/jev-trans/internal/verify"
 )
 
 // Status is the pipeline's honest verdict on a translation, from plan.md §61.

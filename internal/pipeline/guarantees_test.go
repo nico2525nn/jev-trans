@@ -4,14 +4,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/lex"
-	"github.com/nico/jev-trans/internal/pipeline"
-	"github.com/nico/jev-trans/internal/plan"
-	"github.com/nico/jev-trans/internal/semantics"
-	"github.com/nico/jev-trans/internal/syntax"
-	"github.com/nico/jev-trans/internal/verify"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lex"
+	"github.com/nico2525nn/jev-trans/internal/pipeline"
+	"github.com/nico2525nn/jev-trans/internal/plan"
+	"github.com/nico2525nn/jev-trans/internal/semantics"
+	"github.com/nico2525nn/jev-trans/internal/syntax"
+	"github.com/nico2525nn/jev-trans/internal/verify"
 )
 
 // engine returns an engine with no oracle, which is the honest offline

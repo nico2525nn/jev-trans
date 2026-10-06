@@ -30,7 +30,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // ID names a node inside a Graph: "e1" (entity), "v1" (event), "s1" (scope),

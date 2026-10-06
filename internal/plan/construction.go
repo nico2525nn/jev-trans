@@ -37,9 +37,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/trace"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/trace"
 )
 
 // Construction is one realizable frame for a predicate sense in one language.

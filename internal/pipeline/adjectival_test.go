@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/lex"
-	"github.com/nico/jev-trans/internal/syntax"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lex"
+	"github.com/nico2525nn/jev-trans/internal/syntax"
 )
 
 // 「空が青くなった」 is 「い-adjective + なる」: the predicate is なる and the

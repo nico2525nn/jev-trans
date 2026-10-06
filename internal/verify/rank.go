@@ -24,7 +24,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/nico/jev-trans/internal/trace"
+	"github.com/nico2525nn/jev-trans/internal/trace"
 )
 
 // Candidate is one verified target string together with everything the ranker

@@ -3,7 +3,7 @@ package lexgen
 import (
 	"testing"
 
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // TestSharedEnglishLexemeResolvesBothWays is the regression test for the

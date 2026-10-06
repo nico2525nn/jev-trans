@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // Distribution is an explicit probability distribution over a small closed

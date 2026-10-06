@@ -19,8 +19,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/lex"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lex"
 )
 
 // Lexicalizer resolves target-language surfaces.

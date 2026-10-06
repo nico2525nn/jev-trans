@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // failingBackend stands in for a configured external analyser that cannot

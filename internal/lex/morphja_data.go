@@ -1,6 +1,6 @@
 package lex
 
-import "github.com/nico/jev-trans/internal/forest"
+import "github.com/nico2525nn/jev-trans/internal/forest"
 
 // The lexicon is a table, not a library. plan.md §25 requires morphological
 // decomposition to be attempted before anything else, which is only honest if

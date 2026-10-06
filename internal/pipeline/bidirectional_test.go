@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/lex"
-	"github.com/nico/jev-trans/internal/pipeline"
-	"github.com/nico/jev-trans/internal/plan"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lex"
+	"github.com/nico2525nn/jev-trans/internal/pipeline"
+	"github.com/nico2525nn/jev-trans/internal/plan"
 )
 
 // This file is the regression net for the two claims that are easy to break by

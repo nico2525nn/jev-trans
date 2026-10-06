@@ -26,13 +26,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nico/jev-trans/internal/forest"
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
-	"github.com/nico/jev-trans/internal/lexicon"
-	"github.com/nico/jev-trans/internal/ontology"
-	"github.com/nico/jev-trans/internal/syntax"
-	"github.com/nico/jev-trans/internal/trace"
+	"github.com/nico2525nn/jev-trans/internal/forest"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/lexicon"
+	"github.com/nico2525nn/jev-trans/internal/ontology"
+	"github.com/nico2525nn/jev-trans/internal/syntax"
+	"github.com/nico2525nn/jev-trans/internal/trace"
 )
 
 // ambient lets the pipeline route the sub-spans this package opens into its own

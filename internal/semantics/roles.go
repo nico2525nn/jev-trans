@@ -21,8 +21,8 @@ package semantics
 import (
 	"strings"
 
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/ontology"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/ontology"
 )
 
 // jaMarkerRoles maps a Japanese case particle to the semantic roles it can

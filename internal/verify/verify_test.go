@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/lang"
 )
 
 // These tests cover the repairs this slice made to the verifier's verdict

@@ -17,9 +17,9 @@ package semantics
 import (
 	"strings"
 
-	"github.com/nico/jev-trans/internal/forest"
-	"github.com/nico/jev-trans/internal/jlir"
-	"github.com/nico/jev-trans/internal/syntax"
+	"github.com/nico2525nn/jev-trans/internal/forest"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/syntax"
 )
 
 // contrastiveConnectives are the connectives that turn a plain が into a

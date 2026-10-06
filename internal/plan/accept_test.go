@@ -3,7 +3,7 @@ package plan
 import (
 	"testing"
 
-	"github.com/nico/jev-trans/internal/jlir"
+	"github.com/nico2525nn/jev-trans/internal/jlir"
 )
 
 func TestAcceptanceJapanese(t *testing.T) {

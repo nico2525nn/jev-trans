@@ -16,7 +16,7 @@ package ontology
 // Surface forms for both languages live in internal/lexicon; this file is
 // language independent by construction.
 
-import "github.com/nico/jev-trans/internal/jlir"
+import "github.com/nico2525nn/jev-trans/internal/jlir"
 
 // Feature keys. plan.md §11 asks for manner/physicality/ownership_change/
 // intentionality style constraints next to the role frame; these are the keys
