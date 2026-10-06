@@ -137,7 +137,7 @@ func enumerateVariants(b *syntax.Bundle, src lang.Lang) []variant {
 		src = b.Lang
 	}
 	ja := src == lang.JA
-	lex := lexicon.Default()
+	lex := lexicon.ProviderFromEnv()
 	onto := ontology.Default()
 
 	var out []variant
@@ -209,7 +209,7 @@ func enumerateVariants(b *syntax.Bundle, src lang.Lang) []variant {
 }
 
 // senseWeights sums the lexicon's weights per sense id.
-func senseWeights(l *lexicon.Lexicon, surface string, ja bool) map[string]float64 {
+func senseWeights(l lexicon.Provider, surface string, ja bool) map[string]float64 {
 	out := map[string]float64{}
 	if l == nil {
 		return out

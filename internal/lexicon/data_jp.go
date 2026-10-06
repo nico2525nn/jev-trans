@@ -100,6 +100,20 @@ var jaTableB = []entry{
 	{Base: "読む", Spec: "WORK.04:0.94 MENTAL.11:0.04 PERCEIVE.01:0.02"},
 	{Base: "報告する", Spec: "COMMUNICATE.02:0.88"},
 	{Base: "通知する", Spec: "COMMUNICATE.02:0.88"},
+	// する is the most frequent verb in the language and it was missing. The
+	// corpus diagnostic is what made that visible: it reported する as an
+	// unknown lexeme three times, and する is not literary, it is not rare, and
+	// no table of Japanese verbs should lack it.
+	//
+	// The readings are deliberately few and weighted low. する is a light verb
+	// and its real sense is supplied by what it attaches to; CHANGE.02 is the
+	// 〜になる reading and CHANGE.06 the 〜となる one, and anything more
+	// confident than this would be the system guessing. An unlisted compound
+	// verb — 勉強する, 到着する — is still unknown, and reporting that is
+	// correct; claiming coverage here would not be.
+	{Base: "する", Spec: "CHANGE.02:0.42 CHANGE.06:0.34 EXIST.01:0.12"},
+	{Base: "した", Spec: "CHANGE.02:0.42 CHANGE.06:0.34 EXIST.01:0.12"},
+	{Base: "してる", Spec: "CHANGE.02:0.40 CHANGE.06:0.32 EXIST.01:0.12"},
 	{Base: "思う", Spec: "MENTAL.01:0.66 MENTAL.03:0.20 MENTAL.07:0.10"},
 	{Base: "考える", Spec: "MENTAL.01:0.56 MENTAL.13:0.26 MENTAL.09:0.14"},
 	{Base: "知る", Spec: "MENTAL.02:0.90"},

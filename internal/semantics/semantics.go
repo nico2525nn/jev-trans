@@ -174,7 +174,11 @@ type analyzer struct {
 	ja   bool
 	jb   *jlir.Builder
 	onto *ontology.Registry
+	// lex is the curated inventory. prov is the chain that actually answers, and
+	// they are both kept: the curated table is the authority for what it knows,
+	// while an external provider fills the gaps without overruling it.
 	lex  *lexicon.Lexicon
+	prov *lexicon.Set
 	span *trace.Span
 
 	// ents maps a coreference key to the entity it denotes, so that a repeated
@@ -220,6 +224,7 @@ func analyze(b *syntax.Bundle, src lang.Lang, override map[string]*syntax.Clause
 		jb:          jb,
 		onto:        ontology.Default(),
 		lex:         lexicon.Default(),
+		prov:        lexicon.ProviderFromEnv(),
 		ents:        map[string]*jlir.Entity{},
 		phraseSpans: map[string]bool{},
 	}
@@ -389,7 +394,7 @@ func (a *analyzer) predicate(c *syntax.Clause, forced map[string]string) (string
 	// the single dictionary entry the builtin analyser produced; without this
 	// the clause lost its predicate entirely.
 	if cop := a.matrixCopula(c); cop != "" {
-		for _, hit := range a.lex.SensesJP(cop) {
+		for _, hit := range a.sensesJP(cop) {
 			if !strings.HasPrefix(hit.SenseID, "COPULA.") {
 				continue
 			}
@@ -455,15 +460,39 @@ func (a *analyzer) lookup(c *syntax.Clause) (string, *ontology.Sense) {
 // falling back to the other one, because lemmas are often shared.
 func (a *analyzer) senseHits(surface string) []lexicon.SenseHit {
 	if a.ja {
-		if hits := a.lex.SensesJP(surface); len(hits) > 0 {
+		if hits := a.sensesJP(surface); len(hits) > 0 {
 			return hits
 		}
-		return a.lex.SensesEN(surface)
+		return a.sensesEN(surface)
 	}
-	if hits := a.lex.SensesEN(surface); len(hits) > 0 {
+	if hits := a.sensesEN(surface); len(hits) > 0 {
 		return hits
 	}
+	return a.sensesJP(surface)
+}
+
+// sensesJP and sensesEN ask the provider chain, which answers from the curated
+// table first and from an external inventory only where the table is silent.
+// Going through the chain rather than the table is what lets coverage grow
+// without the core knowing where the knowledge came from.
+func (a *analyzer) sensesJP(surface string) []lexicon.SenseHit {
+	if a.prov != nil {
+		return a.prov.SensesJP(surface)
+	}
+	if a.lex == nil {
+		return nil
+	}
 	return a.lex.SensesJP(surface)
+}
+
+func (a *analyzer) sensesEN(surface string) []lexicon.SenseHit {
+	if a.prov != nil {
+		return a.prov.SensesEN(surface)
+	}
+	if a.lex == nil {
+		return nil
+	}
+	return a.lex.SensesEN(surface)
 }
 
 // senseAlternatives returns the full weighted candidate set for the predicate,
@@ -1724,7 +1753,7 @@ func (a *analyzer) matrixCopula(c *syntax.Clause) string {
 		return ""
 	}
 	surface := m.Text(a.b.Source)
-	for _, hit := range a.lex.SensesJP(surface) {
+	for _, hit := range a.sensesJP(surface) {
 		if strings.HasPrefix(hit.SenseID, "COPULA.") {
 			return surface
 		}

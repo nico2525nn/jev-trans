@@ -216,6 +216,28 @@ internal/
 | `JEV_ADDR` | `serve` の既定待ち受けアドレス |
 | `JEV_SUDACHI_ADAPTER` | Sudachi アダプタのパス。自動探索が効かない場合の明示指定 |
 | `JEV_SUDACHI_DICT` / `SUDACHIDICT_DIR` | 使う SudachiDict ビルド（small / core / full、旧仮名は国語研 UniDic） |
+| `JEV_LEXICON_TSV` | 外部の述語辞書（TSV）。述語知識の供給元を拡張する。ファイルが無い場合は使われずに忽略される |
+
+### 述語知識の供給元（LexicalProvider）
+
+述語知識は `internal/lexicon.Provider` の向こう側にあり、core は供給先を知りません。
+バイナリに組み込まれているのは curation 済みのテーブルだけで、外部の辞書は
+同じ役割を演じます。core を書き換えずにカバレッジを広げられます。
+
+```tsv
+# 出典をここに書く。トレースがこの行を読む
+落ちる	MOVE.05:0.90
+きらめき	MOVE.15:0.60,MOVE.01:0.30
+```
+
+- **チェーンは先勝ち**です。curation 済みテーブルが知っているものを外部辞書が
+  上書きすることはありません。一般辞書の第1義は文脈が求める読みとは限らず、
+  それを許すと、動作している部分が黙って劣化します。
+- **オントロジは閉集合**です。sense をここに書いても、オントロジに無い id は
+  捨てられます。provider は語彙を*広げる* もので、sense を*増やす* ものではありません。
+  sense は語についてではなく世界についての一主張なので、ontology 自身の変更として
+  review されるべきです。
+- **ファイルが無い = 未設定**、異常ではありません。トレースにはconsult した provider 名が残ります。
 
 ---
 
@@ -405,8 +427,21 @@ theme 付きで解決しますが subject が空のため、realizer が何も�
 
 1. **candidate generated の regression**（Sudachi 化で 5 → 2）。下流が Sudachi の
    細かい分割に追いついていません。ここを先に直します。
-2. **述語知識が 37 件**。Sudachi が分割できた動詞でも、述語辞書にはまだ
-   無い動詞があります。
+2. **述語知識が 51 件**。Sudachi が分割できた動詞でも、述語辞書にはまだ
+   無い動詞があります。ただし内訳は 1 つの原因ではありません。
+   `tools/stages.py` の `unresolved clause heads` が区別します。
+
+   ```
+   51  unknown_lexeme  (35 distinct heads)   語彙の問題
+    6  auxiliary       (2 distinct heads)    構文解析の問題
+    5  no_clause_head                         分割の結果
+   ```
+
+   35 heads の多くは宮沢賢治 1920 年代の語彙 — `落ち` `きらめき` `置きすて`
+   `浮ん` — で，手で追記してもこの作品のためだけになります。
+   そこで LexicalProvider を入れました。Supply 元は差し替え可能で、
+   `JEV_LEXICON_TSV` に TSV を渡すだけで core は触らずにカバレッジが広がります。
+   この環境には外部辞書が無いので、头上的数値はまだ変わっていません。
 3. **意味フレームが 25 件**。述語は分かったが、役割が埋まらない文。
 4. **英語構築が 13 件**。sense は取れても対象言語の構築が無い。
 5. **名詞の語彙**。`見草` `雲` `沢` など、この作品の地名が未収録で、

@@ -196,7 +196,7 @@ func (a *analyzer) spanOf(window []string) jlir.Span {
 }
 
 // senseIDs returns the sorted ontology sense ids a surface can denote.
-func senseIDs(l *lexicon.Lexicon, surface string, ja bool) []string {
+func senseIDs(l lexicon.Provider, surface string, ja bool) []string {
 	if l == nil {
 		return nil
 	}
