@@ -325,7 +325,7 @@ func (a *analyzer) respectAddressee(c *syntax.Clause) string {
 func (a *analyzer) sentenceFinal(c *syntax.Clause) []string {
 	out := make([]string, 0, 4)
 	for _, id := range c.SentenceFinal {
-		if text := a.b.Text(id); text != "" {
+		if text := a.sentenceFinalParticle(a.b.Text(id)); text != "" {
 			out = appendUniqueString(out, text)
 		}
 	}
@@ -338,12 +338,52 @@ func (a *analyzer) sentenceFinal(c *syntax.Clause) []string {
 		if m == nil {
 			continue
 		}
-		surface := m.Text(a.b.Source)
-		if _, ok := particleAttitude[surface]; ok {
+		surface := a.sentenceFinalParticle(m.Text(a.b.Source))
+		if surface != "" {
 			out = appendUniqueString(out, surface)
 		}
 	}
 	return out
+}
+
+// sentenceFinalParticle reduces a surface to the stance particle it actually is,
+// or "" when it is not one.
+//
+// The granularity matters because the field is compared against the target's
+// particles. A backend that cannot split です + ね hands over 「ですね」 as one
+// morpheme, and recording that string means a source which genuinely carries
+// ね is stored under a key nothing else will ever match: the invention check
+// looks for ね, does not find it, and would call a faithful translation an
+// invented particle. Recording ね instead makes the check mean what it says.
+//
+// A surface with no known particle inside it records nothing rather than itself.
+// Writing ですね into a field named sentence-final particles asserts that the
+// clause ends in a stance marker, and ですか has none.
+func (a *analyzer) sentenceFinalParticle(surface string) string {
+	surface = strings.TrimSpace(surface)
+	if surface == "" {
+		return ""
+	}
+	if _, ok := particleAttitude[surface]; ok {
+		return surface
+	}
+	// Longest particle first: か and ね are single characters and けれど is
+	// longer, so scanning by descending length keeps けれど from being read as
+	// けれど's own trailing よ.
+	best := ""
+	for p := range particleAttitude {
+		if !strings.HasSuffix(surface, p) {
+			continue
+		}
+		// Longest match wins. か is one character and よ is one character, so
+		// 「cmakeよ」 has to resolve to よ by exclusion and 「_kwargsよ」 to the
+		// longer particle; comparing lengths handles both without an
+		// enumeration of particles that happen to end in another particle.
+		if len(p) > len(best) {
+			best = p
+		}
+	}
+	return best
 }
 
 // verbChain lists the morphemes whose inflection determines the style: the
