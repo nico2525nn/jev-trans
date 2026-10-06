@@ -321,11 +321,11 @@ func TestFPluralIsNotAVowelRule(t *testing.T) {
 		{"life", "lives"}, {"man", "men"}, {"woman", "women"},
 		{"person", "people"}, {"child", "children"}, {"book", "books"},
 	} {
-		if got := pluralize(tc.sing, jlir.NumberPlural); got != tc.plur {
-			t.Errorf("pluralize(%q) = %q, want %q", tc.sing, got, tc.plur)
+		if got := Pluralize(tc.sing, jlir.NumberPlural); got != tc.plur {
+			t.Errorf("Pluralize(%q) = %q, want %q", tc.sing, got, tc.plur)
 		}
 	}
-	if got := pluralize("roof", jlir.NumberSingular); got != "roof" {
+	if got := Pluralize("roof", jlir.NumberSingular); got != "roof" {
 		t.Errorf("the singular was pluralized to %q", got)
 	}
 }

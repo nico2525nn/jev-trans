@@ -134,8 +134,6 @@ var jaTableB = []entry{
 	// direction is contrastive — that is the whole difference between 来る and
 	// 行く — so it cannot be folded into a generic motion sense.
 	{Base: "来る", Spec: "MOVE.02:0.88 MOVE.14:0.06"},
-	{Base: "来た", Spec: "MOVE.02:0.82 MOVE.14:0.08"},
-	{Base: "きて", Spec: "MOVE.02:0.82 MOVE.14:0.08"},
 	{Base: "思う", Spec: "MENTAL.01:0.66 MENTAL.03:0.20 MENTAL.07:0.10"},
 	{Base: "考える", Spec: "MENTAL.01:0.56 MENTAL.13:0.26 MENTAL.09:0.14"},
 	{Base: "知る", Spec: "MENTAL.02:0.90"},

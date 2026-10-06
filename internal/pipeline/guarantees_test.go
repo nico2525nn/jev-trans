@@ -16,9 +16,51 @@ import (
 
 // engine returns an engine with no oracle, which is the honest offline
 // configuration: every decision falls back to a deterministic prior and says so.
+// engine builds the engine the CLI builds.
+//
+// It used to pass only a default mode, which left the morphological registry
+// empty and silently ran every test in this package on the builtin analyser
+// while the binary under test was using Sudachi. The two agree on the two
+// sentences that started the suite and disagree on tense, register and
+// segmentation for much else, so a golden written through this helper was a
+// golden for a configuration nobody ships.
+//
+// Registering Sudachi when it is usable and keeping the builtin otherwise
+// mirrors cmd/jevtrans, so a test failure now means the product is wrong
+// rather than that the test built a different system than the command line
+// did.
 func engine(t *testing.T) *pipeline.Engine {
 	t.Helper()
-	return pipeline.NewEngine(pipeline.EngineConfig{DefaultMode: "interactive"})
+	return engineWithMorph(t, true)
+}
+
+// builtinEngine is the same engine with the external analyser forced off, for
+// the assertions that must hold in an environment where Sudachi is not
+// installed at all.
+func builtinEngine(t *testing.T) *pipeline.Engine {
+	t.Helper()
+	return engineWithMorph(t, false)
+}
+
+func engineWithMorph(t *testing.T, wantSudachi bool) *pipeline.Engine {
+	t.Helper()
+	reg := lex.NewRegistry()
+	external := false
+	if wantSudachi && sudachiAvailable() {
+		reg.Register(lex.NewProcessAnalyzer(lex.SudachiConfig("core")))
+		external = true
+	}
+	// MorphProfile is the CLI's default. Leaving it empty is not the same as
+	// auto — the profile decides which dictionary the backend is asked for, and
+	// an empty profile made the builtin analyser lose the past tense on 「来た」
+	// while the command line kept it, which is how a golden written here came to
+	// disagree with the product.
+	return pipeline.NewEngine(pipeline.EngineConfig{
+		DefaultMode:   "auto",
+		Morph:         reg,
+		ExternalMorph: external,
+		MorphProfile:  lex.ProfileAuto,
+	})
 }
 
 func translate(t *testing.T, text string, src, tgt lang.Lang, mode string) *pipeline.Response {

@@ -38,3 +38,36 @@ count.
 different claims and no candidate on this corpus is proved equivalent yet;
 the four selected candidates are LOSSY. That is the honest state, and raising
 it by loosening the verifier is exactly what must not happen.
+
+## Per backend
+
+`--morph builtin` and `--morph auto` are genuinely different systems and the
+numbers differ. An earlier note in this file claimed they agreed; that was
+measured with `JEV_SUDACHI_ADAPTER=off`, which is not the builtin backend at
+all — it selects which process adapter `internal/lex` auto-discovers, and the
+value `off` names an adapter that does not exist, so the run fell through to
+something that was not the documented fallback. The table below uses the
+documented switch.
+
+| metric | `--morph builtin` | `--morph auto` (Sudachi) |
+|---|---|---|
+| morphology fully resolved | 3 | 68 |
+| predicate fully resolved | 38 | 31 |
+| semantic frame fully resolved | 36 | 28 |
+| constructions selected | 35 | 49 |
+| raw candidates | 176 | 216 |
+| eligible (gate passed) | 5 | 4 |
+| certified (equivalence proved) | 0 | 0 |
+| selected | 5 | 4 |
+| unresolved clause heads | 40 | 61 |
+
+The builtin analyser resolves more predicates and more frames because it
+carries explicit entries for pre-1946 spellings that SudachiDict core does not
+segment in a form this pipeline can use — 「云ふ」 was unrecognised on the
+Sudachi path until the classical 言う forms were registered on both. It
+resolves far less morphology, because every surface its dictionary does not
+list becomes an unknown token.
+
+Neither is strictly better. That is the argument for both being measured, and
+for `forEachBackend` in the test suite switching the engine's morphological
+registry rather than an environment variable.

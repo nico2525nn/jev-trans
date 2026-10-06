@@ -1,6 +1,7 @@
 package pipeline_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -42,10 +43,14 @@ var enFinals = []string{" indeed", " isn't it", " you know", " right?"}
 // Japanese sentence must not come out with an English stance marker, and an
 // English one must not come back with a Japanese one.
 func TestNoUnsupportedPragmaticInformationInEitherDirection(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, _ string) {
+	forEachBackend(t, func(t *testing.T, backend string) {
+		e := engine(t)
+		if backend == "builtin" {
+			e = builtinEngine(t)
+		}
 		for _, politeness := range []float64{0.3, 0.5, 0.7} {
 			// EN -> JA
-			resp, err := engine(t).Translate(t.Context(), pipeline.Request{
+			resp, err := e.Translate(t.Context(), pipeline.Request{
 				Text:       "Taro gave a book to Hanako.",
 				SourceLang: lang.EN, TargetLang: lang.JA,
 				DocumentID: t.Name(), Mode: "auto",
@@ -68,10 +73,10 @@ func TestNoUnsupportedPragmaticInformationInEitherDirection(t *testing.T) {
 
 			// JA -> EN. A plain sentence must not acquire an English stance
 			// marker; English has no slot that obliges one.
-			resp, err = engine(t).Translate(t.Context(), pipeline.Request{
+			resp, err = e.Translate(t.Context(), pipeline.Request{
 				Text:       "太郎は本を花子に渡した。",
 				SourceLang: lang.JA, TargetLang: lang.EN,
-				DocumentID: t.Name(), Mode: "auto",
+				DocumentID: t.Name() + fmt.Sprint(politeness), Mode: "auto",
 				Style: plan.StyleProfile{Register: plan.RegisterNeutral, Politeness: politeness},
 			})
 			if err != nil {
@@ -129,7 +134,11 @@ func TestPragmaticInformationInTheSourceSurvives(t *testing.T) {
 // it either — the referent is internal, and plan.md §47 says so.
 func TestNoGenderIsInventedAcrossBothDirections(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, backend string) {
-		resp := translate(t, "太郎が花子に本を渡した。", lang.JA, lang.EN, "auto")
+		e := engine(t)
+		if backend == "builtin" {
+			e = builtinEngine(t)
+		}
+		resp := mustTranslate(t, e, "太郎が花子に本を渡した。")
 		if resp.Result.Selected != nil {
 			got := strings.ToLower(resp.Result.Selected.Text)
 			for _, p := range []string{" he ", " she ", " his ", " her "} {
@@ -139,7 +148,7 @@ func TestNoGenderIsInventedAcrossBothDirections(t *testing.T) {
 				}
 			}
 		}
-		resp = translate(t, "Taro gave a book to Hanako.", lang.EN, lang.JA, "auto")
+		resp = mustTranslate(t, e, "Taro gave a book to Hanako.")
 		if resp.Result.Selected != nil {
 			got := resp.Result.Selected.Text
 			// 彼 and 彼女 are only acceptable when the source named a gender
@@ -172,11 +181,15 @@ func anyGenderFeature(g *jlir.Graph) bool {
 // forEachBackend runs a check under the builtin analyser and, when it is
 // usable, under Sudachi too. A guarantee that holds for one and not the other
 // is not a guarantee.
+//
+// The switch is the engine's morphological registry, not an environment
+// variable. Setting JEV_SUDACHI_ADAPTER changes what the command line
+// constructs; it does not change an engine a caller already built, so a test
+// that only set the variable was running the same analyser twice.
 func forEachBackend(t *testing.T, check func(t *testing.T, backend string)) {
 	t.Helper()
 
 	t.Run("builtin", func(t *testing.T) {
-		t.Setenv("JEV_SUDACHI_ADAPTER", "off")
 		check(t, "builtin")
 	})
 
@@ -184,9 +197,18 @@ func forEachBackend(t *testing.T, check func(t *testing.T, backend string)) {
 		if !sudachiAvailable() {
 			t.Skip("sudachi is not usable in this environment")
 		}
-		t.Setenv("JEV_SUDACHI_ADAPTER", "sudachipy")
 		check(t, "sudachi")
 	})
+}
+
+// withEngine runs body against one of the two engines.
+func withEngine(t *testing.T, backend string, body func(t *testing.T, e *pipeline.Engine)) {
+	t.Helper()
+	if backend == "sudachi" {
+		body(t, engine(t))
+		return
+	}
+	body(t, builtinEngine(t))
 }
 
 // TestBothDirectionsSurviveBothBackends is the plain directional net. The two
@@ -195,7 +217,11 @@ func forEachBackend(t *testing.T, check func(t *testing.T, backend string)) {
 // any sense that matters.
 func TestBothDirectionsSurviveBothBackends(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, backend string) {
-		resp := translate(t, "太郎が花子に本を渡した。", lang.JA, lang.EN, "auto")
+		e := engine(t)
+		if backend == "builtin" {
+			e = builtinEngine(t)
+		}
+		resp := mustTranslate(t, e, "太郎が花子に本を渡した。")
 		if resp.Result.Selected == nil {
 			t.Fatalf("%s: JA->EN produced no candidate for the core golden", backend)
 		}
@@ -206,7 +232,7 @@ func TestBothDirectionsSurviveBothBackends(t *testing.T) {
 		// yields the plain form — no style was requested, so none is invented —
 		// and asserting the polite string here would be asserting the CLI's
 		// default rather than the direction's capability.
-		resp, err := engine(t).Translate(t.Context(), pipeline.Request{
+		resp, err := e.Translate(t.Context(), pipeline.Request{
 			Text:       "Taro gave a book to Hanako.",
 			SourceLang: lang.EN, TargetLang: lang.JA,
 			DocumentID: t.Name(), Mode: "auto",
@@ -224,7 +250,14 @@ func TestBothDirectionsSurviveBothBackends(t *testing.T) {
 
 		// And with none, the plain form — the two together say the style is a
 		// parameter rather than a constant.
-		plain := translate(t, "Taro gave a book to Hanako.", lang.EN, lang.JA, "auto")
+		plain, err := e.Translate(t.Context(), pipeline.Request{
+			Text: "Taro gave a book to Hanako.", SourceLang: lang.EN, TargetLang: lang.JA,
+			DocumentID: t.Name(), Mode: "auto",
+			Style: plan.StyleProfile{Register: plan.RegisterNeutral, PronounExplicitness: 0.3},
+		})
+		if err != nil {
+			t.Fatalf("%s: EN->JA plain: %v", backend, err)
+		}
 		if plain.Result.Selected == nil {
 			t.Fatalf("%s: EN->JA plain produced no candidate", backend)
 		}
@@ -260,7 +293,11 @@ func TestTheBuiltinAnalyserIsUsableOnItsOwn(t *testing.T) {
 // translation an invention. Both backends must record ね.
 func TestSentenceFinalParticleIsRecordedAtParticleGranularity(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, backend string) {
-		resp := translate(t, "今日はいい天気ですね。", lang.JA, lang.EN, "auto")
+		e := engine(t)
+		if backend == "builtin" {
+			e = builtinEngine(t)
+		}
+		resp := mustTranslate(t, e, "今日はいい天気ですね。")
 		g := resp.JLIR.Source
 		if g == nil {
 			t.Fatalf("%s: no source graph", backend)
@@ -284,7 +321,11 @@ func TestSentenceFinalParticleIsRecordedAtParticleGranularity(t *testing.T) {
 // would assert that it does.
 func TestASurfaceWithNoParticleRecordsNothing(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, backend string) {
-		resp := translate(t, "今日はいい天気ですか。", lang.JA, lang.EN, "auto")
+		e := engine(t)
+		if backend == "builtin" {
+			e = builtinEngine(t)
+		}
+		resp := mustTranslate(t, e, "今日はいい天気ですか。")
 		g := resp.JLIR.Source
 		if g == nil {
 			return
@@ -296,4 +337,110 @@ func TestASurfaceWithNoParticleRecordsNothing(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestIndefinitePronounIsNotTheInterrogative pins a translation that was wrong
+// in the confident direction.
+//
+// 「誰かが来た。」 came out as "Who came." — the interrogative reading, which is
+// the opposite of what the sentence says. Sudachi reports 誰, か, が as three
+// morphemes because か and が are separate particles, so the noun phrase ended
+// before the か and the lexicalizer was handed a bare 誰.
+//
+// The fix has two halves and both are needed. The phrase absorbs the か when a
+// case particle follows it, which is what distinguishes the indefinite 誰か from
+// the interrogative 誰. And the quantifier lookup reads the phrase rather than
+// only the head morpheme: 誰 is a pronoun and 誰か is a generalized quantifier,
+// so looking only at the head left the source with no scope node while the
+// English "someone" had one, and the verifier then refused every faithful
+// rendering as DIVERGENT.
+func TestIndefinitePronounIsNotTheInterrogative(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, backend string) {
+		e := engine(t)
+		if backend == "builtin" {
+			e = builtinEngine(t)
+		}
+		for _, tc := range []struct {
+			src  string
+			want string
+		}{
+			{"誰かが来た。", "Someone came."},
+			{"誰かが云ふ。", "Someone says."},
+			{"誰かが本を読んだ。", "Someone read a book."},
+		} {
+			// A document per sentence: the engine keeps document state, and three
+			// unrelated sentences sharing one accumulate discourse the later two
+			// resolve against. That is correct behaviour and the wrong thing for a
+			// test of independent sentences.
+			resp := mustTranslate(t, e, tc.src)
+			if resp.Result.Selected == nil {
+				t.Errorf("%q: no candidate", tc.src)
+				continue
+			}
+			if got := resp.Result.Selected.Text; got != tc.want {
+				t.Errorf("%q = %q, want %q", tc.src, got, tc.want)
+			}
+		}
+	})
+}
+
+// The interrogative reading must survive the fix above. 「誰が来た。」 asks who
+// came; if 誰 alone had been rewritten to someone, the system would be
+// answering its own question.
+func TestInterrogativePronounSurvives(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, backend string) {
+		e := engine(t)
+		if backend == "builtin" {
+			e = builtinEngine(t)
+		}
+		resp := mustTranslate(t, e, "誰が来た。")
+		if resp.Result.Selected == nil {
+			t.Fatal("no candidate")
+		}
+		if got := resp.Result.Selected.Text; got != "Who came." {
+			t.Errorf("誰が来た。 = %q, want %q", got, "Who came.")
+		}
+	})
+}
+
+// English has no plural of "someone": the indefinite reading already covers any
+// number, so "someones" is not a word. The regular -s rule used to produce it,
+// and 「誰かが来た」 came out as "Someones came."
+func TestQuantifierPronounsHaveNoPlural(t *testing.T) {
+	for _, w := range []string{"someone", "anyone", "everyone", "nobody",
+		"something", "anything", "everything", "nothing", "each", "neither"} {
+		if got := plan.Pluralize(w, jlir.NumberPlural); got != w {
+			t.Errorf("plural of %q = %q; the quantifier pronouns are invariant", w, got)
+		}
+	}
+	// And the regular rule still applies to everything else.
+	for _, tc := range []struct{ sing, plur string }{
+		{"book", "books"}, {"city", "cities"}, {"box", "boxes"}, {"child", "children"},
+	} {
+		if got := plan.Pluralize(tc.sing, jlir.NumberPlural); got != tc.plur {
+			t.Errorf("plural of %q = %q, want %q", tc.sing, got, tc.plur)
+		}
+	}
+}
+
+// mustTranslate runs one sentence and fails the test if the engine does.
+func mustTranslate(t *testing.T, e *pipeline.Engine, src string) *pipeline.Response {
+	t.Helper()
+	if e == nil {
+		return translate(t, src, lang.JA, lang.EN, "auto")
+	}
+	// The style is the CLI's default rather than a zero value. A zero-valued
+	// profile is a legitimate request, but it is not what the command line does,
+	// and a golden written against it is a golden for a configuration nobody
+	// ships.
+	resp, err := e.Translate(t.Context(), pipeline.Request{
+		Text: src, SourceLang: lang.JA, TargetLang: lang.EN,
+		DocumentID: t.Name() + "|" + src, Mode: "auto",
+		Style: plan.StyleProfile{Register: plan.RegisterNeutral, Politeness: 0.5,
+			PronounExplicitness: 0.3},
+	})
+	if err != nil {
+		t.Fatalf("Translate(%q): %v", src, err)
+	}
+	return resp
 }

@@ -441,11 +441,11 @@ func (rt *realizer) enNPAlts(np *NPPlan, slot, prep string, initial bool) []fore
 	proper := np.Proper || hasNameAlias(rt.entity(np), lang.EN)
 	for _, num := range numbers {
 		if np.NumberDetermined && np.Number != "" && num != np.Number {
-			rt.reject(slot, pluralize(head, num), HardNumber,
+			rt.reject(slot, Pluralize(head, num), HardNumber,
 				"number "+num+" contradicts the sourced number "+np.Number+" of "+string(np.EntityID), "realization")
 			continue
 		}
-		noun := pluralize(head, num)
+		noun := Pluralize(head, num)
 		for i, det := range dets {
 			if proper && (det == "a" || det == "an") {
 				rt.reject(slot, strings.TrimSpace(det+" "+noun), HardDeterminer,
@@ -1026,11 +1026,32 @@ var enNounPlural = map[string]string{
 	"wolf": "wolves", "shelf": "shelves", "thief": "thieves",
 	"knife": "knives", "wife": "wives", "life": "lives",
 	"leaf": "leaves", "loaf": "loaves",
+
+	// The quantifier pronouns are invariant in form. English has no plural of
+	// "someone": the indefinite reading already covers any number, so
+	// "someones" is not a word. The regular rule used to produce it, and
+	// 「誰かが来た」 came out as "Someones came."
+	//
+	// Listing them as mapping to themselves is the only place the fact can live
+	// — pluralize has no notion of a closed class, and the regular -s rule is
+	// right for everything else.
+	"someone": "someone", "somebody": "somebody",
+	"anyone": "anyone", "anybody": "anybody",
+	"everyone": "everyone", "everybody": "everybody",
+	"nobody": "nobody", "none": "none",
+	"something": "something", "anything": "anything", "everything": "everything",
+	"nothing": "nothing",
+	"each": "each", "either": "either", "neither": "neither",
+	"one": "one", "another": "another",
 }
 
-// pluralize returns the plural of an English noun. The lexical table is
-// consulted first; everything else follows the regular rules.
-func pluralize(noun, number string) string {
+// Pluralize returns the plural of an English noun. It is exported because the
+// invariant forms are a property of English that a test needs to be able to
+// assert directly rather than inferring from a translation.
+//
+// The lexical table is consulted first; everything else follows the regular
+// rules.
+func Pluralize(noun, number string) string {
 	if noun == "" {
 		return ""
 	}

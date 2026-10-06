@@ -488,6 +488,19 @@ func (p *jaParse) arguments(c *Clause, sp jaSpan) {
 
 		case jaIsMarkingParticle(m):
 			if np != nil && np.head >= 0 {
+				// 「誰かが来た」 is one pronoun followed by が, not a pronoun, an
+				// unbound か, and then が. The か in an indefinite pronoun is part
+				// of the word, so leaving it outside the phrase hands the
+				// lexicalizer a bare 誰 and it renders "Who", which is the
+				// interrogative reading — the opposite of what the sentence says.
+				//
+				// The test is a か immediately before a case particle: in
+				// 「誰が来た」 the か is itself the particle and nothing precedes
+				// it, so the interrogative reading is preserved.
+				if p.absorbIndefiniteKa(np, i, sp) {
+					p.note(c, "%s is the indefinite pronoun 誰か rather than a pronoun "+
+						"plus a stray particle", p.ms[np.head].Surface)
+				}
 				ph := p.phraseOf(np)
 				p.attach(c, ph, m.Case())
 				if ph.Case == "to" {
@@ -579,6 +592,38 @@ func (p *jaParse) arguments(c *Clause, sp jaSpan) {
 			p.undetermined = true
 		}
 	}
+}
+
+// absorbIndefiniteKa folds a か that immediately precedes a case particle into
+// the noun phrase, turning 「誰」+「か」 into the single pronoun 誰か.
+//
+// Japanese marks an indefinite pronoun with か on the noun: 誰か, 何か,
+// どこか. Sudachi reports those as three morphemes — 誰, か, が — because the か
+// and the が are separate particles, and a phrase builder that takes the
+// nominative span literally ends the phrase before the か. What reaches the
+// target then is a bare 誰, which English renders as the interrogative "who":
+// the sentence means "someone came" and the translation asks "who came".
+//
+// The condition is narrow on purpose. The か must sit directly before a case
+// particle and directly after the phrase head. 「誰が来た」 fails it twice — the
+// か is itself the particle, and there is nothing between it and the sentence
+// start — so the interrogative reading survives, which is what it should.
+func (p *jaParse) absorbIndefiniteKa(np *jaNP, particle int, sp jaSpan) bool {
+	if np == nil || np.head < 0 {
+		return false
+	}
+	// The か must be the morpheme immediately before the case particle, and the
+	// phrase must end on the head — that is, the か was skipped rather than
+	// absorbed, which is the situation this rule exists for.
+	ka := particle - 1
+	if ka <= sp.from || ka >= len(p.ms) || np.to != ka || np.head != ka-1 {
+		return false
+	}
+	if p.ms[ka].Surface != "か" || p.ms[ka].POS != forest.POSParticle {
+		return false
+	}
+	np.to = ka + 1
+	return true
 }
 
 // attach routes a marked noun phrase to its clause slot.

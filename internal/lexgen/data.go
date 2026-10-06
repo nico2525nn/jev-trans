@@ -144,6 +144,11 @@ var jaPronouns = map[string]string{
 	"彼ら": "they", "彼女たち": "they",
 	"それ": "it", "あれ": "that", "これ": "this",
 	"だれ": "who", "誰": "who", "何": "what", "いつ": "when", "どこ": "where",
+	// Indefinite pronouns. か on a noun is the indefinite morpheme, not a
+	// particle, so 誰か is one word and means "someone" — the table would
+	// otherwise reach 誰 and answer "who", which is the interrogative reading
+	// and the opposite of what the sentence says.
+	"誰か": "someone", "だれか": "someone", "何か": "something", "どこか": "somewhere",
 }
 
 // enPronouns maps English personal pronouns onto Japanese. These are lexical

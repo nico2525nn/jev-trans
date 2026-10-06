@@ -289,6 +289,15 @@ var jaPronouns = []jaEntry{
 	{"これ", jaPPron, "", "", "demonstrative=kono", 1},
 	{"それ", jaPPron, "", "", "demonstrative=sono", 1},
 	{"誰", jaPPron, "", "", "person=unspecified", 0},
+	// The か of an indefinite pronoun is part of the word, so 誰か is a
+	// generalized quantifier and must be registered as one. Without it the
+	// source graph carries no scope node while the English target "someone"
+	// does, and the verifier then rejects every faithful translation for a
+	// difference the source was the one missing.
+	{"誰か", jaPNoun, "誰か", "誰", "quantifier=some person=unspecified", 9},
+	{"だれか", jaPPron, "誰か", "誰", "quantifier=some person=unspecified", 9},
+	{"何か", jaPNoun, "何か", "何", "quantifier=some", 9},
+	{"どこか", jaPPron, "どこか", "どこ", "quantifier=some", 9},
 	{"だれ", jaPPron, "", "", "person=unspecified", 0},
 	{"何", jaPPron, "", "", "interrogative=1", 0},
 	{"なに", jaPPron, "", "", "interrogative=1", 0},
@@ -893,6 +902,21 @@ var jaVerbsGodan = []jaEntry{
 	{"飲む", jaPVerb, "", "", "cj=g frame=transitive", 0},
 	{"食う", jaPVerb, "", "", "cj=g frame=transitive", 0},
 	{"言う", jaPVerb, "", "", "cj=g frame=transitive", 0},
+	// 言う as a pre-1946 text writes it: 云う with the ひ/ふ/は rows. 宮沢
+	// 賢治's generation used it as the ordinary spelling, so a corpus of that
+	// period produces 云ふ and 云ひ where a modern dictionary produces 言う —
+	// and an unrecognised verb means no predicate, which is a whole sentence
+	// lost rather than a spelling variant.
+	//
+	// The lemma stays 言う so the predicate lookup finds the sense; the
+	// historical flag is carried so the trace can say the spelling is
+	// pre-1946 rather than modern.
+	{"云う", jaPVerb, "", "言う", "cj=g frame=transitive historical=1", 2},
+	{"云ひ", jaPVerb, "", "言う", "cj=g frame=transitive historical=1", 2},
+	{"云ふ", jaPVerb, "", "言う", "cj=g frame=transitive historical=1", 2},
+	{"云つ", jaPVerb, "", "言う", "cj=g frame=transitive historical=1", 2},
+	{"云った", jaPVerb, "云う", "言う", "cj=g frame=transitive tense=past historical=1", 3},
+	{"云ひます", jaPVerb, "云ひ", "言う", "cj=g frame=transitive tense=present politeness=polite", 3},
 	{"問う", jaPVerb, "", "", "cj=g frame=transitive", 0},
 	{"泣く", jaPVerb, "", "", "cj=g frame=transitive", 0},
 	{"笑う", jaPVerb, "", "", "cj=g frame=transitive", 0},

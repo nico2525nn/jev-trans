@@ -201,9 +201,23 @@ func (a *analyzer) quantifierOf(c *syntax.Clause) (string, string) {
 		if p == nil || p.Head == "" {
 			continue
 		}
-		surface := a.b.Text(p.Head)
-		if op, ok := quantifierWords[normalizeMarker(surface)]; ok {
-			return surface, op
+		// The head morpheme first, then the whole phrase.
+		//
+		// They differ exactly where the quantifier is written: 誰 is a pronoun
+		// and 誰か is an indefinite quantifier, and Sudachi reports them as
+		// separate morphemes because か and が are separate particles. Looking
+		// only at the head finds the pronoun, records no scope node, and leaves
+		// the English "someone" with an operator the source does not have — at
+		// which point the verifier correctly refuses every faithful rendering.
+		if surface := a.b.Text(p.Head); surface != "" {
+			if op, ok := quantifierWords[normalizeMarker(surface)]; ok {
+				return surface, op
+			}
+		}
+		if surface := strings.TrimSpace(p.Span.Text(a.b.Source)); surface != "" {
+			if op, ok := quantifierWords[normalizeMarker(surface)]; ok {
+				return surface, op
+			}
 		}
 	}
 	return "", ""

@@ -87,15 +87,22 @@ func writeInventory(t *testing.T, rows string) string {
 
 // translateDoc gives each call its own document id, because the engine caches
 // by document and a second call under the same id returns the first answer.
+// translateDoc runs one sentence in its own document with the CLI's mode.
+//
+// The mode is not incidental. "full" is not one of auto|interactive|strict, so
+// a helper that passed it was taking a path the CLI never takes — and the
+// golden assertions that came out of it disagreed with what the binary
+// produces for the same sentence, which is the worst possible way for a test to
+// disagree with the product.
 func translateDoc(t *testing.T, text, doc string) *pipeline.Response {
 	t.Helper()
-	resp, err := pipeline.NewEngine(pipeline.EngineConfig{DefaultMode: "interactive"}).
+	resp, err := pipeline.NewEngine(pipeline.EngineConfig{DefaultMode: "auto"}).
 		Translate(t.Context(), pipeline.Request{
 			Text:       text,
 			SourceLang: lang.JA,
 			TargetLang: lang.EN,
 			DocumentID: doc,
-			Mode:       "full",
+			Mode:       "auto",
 		})
 	if err != nil {
 		t.Fatalf("Translate(%q) returned %v", text, err)
