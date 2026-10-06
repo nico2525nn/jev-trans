@@ -110,6 +110,11 @@ const (
 	lossZeroRealization = 0.06
 	lossPronounChoice   = 0.05
 	lossReferentUncheck = 0.08
+	// lossTenseUndetermined is charged when the source did not determine its tense
+	// and the target committed to one. It is smaller than a real tense change
+	// because nothing was contradicted, but it is not nothing: the proposition
+	// the target asserts is one the source never licensed.
+	lossTenseUndetermined = 0.04
 	// plan.md §22's canonical hallucination, reported at full referential cost
 	// because it asserts something the source never said.
 	lossGenderInvented = 0.80
@@ -695,10 +700,29 @@ func (v *verifier) compareEventFeatures(p eventPair, item string) {
 			DimPropositional, lossPolarityChange, DiffPolarity)
 	}
 
-	if st, tt := normalizeFeature(s.Tense), normalizeFeature(t.Tense); st != "" && tt != "" && st != tt {
+	st, tt := normalizeFeature(s.Tense), normalizeFeature(t.Tense)
+	if st == "" && tt != "" {
+		// The source did not determine its tense and the target committed to
+		// one. That is not a mistranslation — nothing in the source contradicts
+		// the choice — and it is not equivalence either: nothing in the source
+		// supports it either. It is exactly the UNDERDETERMINED condition
+		// plan.md §61 exists for, and it has to be recorded rather than passed
+		// over.
+		//
+		// It used to be passed over silently, and an older version of this file
+		// "fixed" it in the wrong direction with an equivalentTense that
+		// returned true for UNKNOWN against PAST. That branch was unreachable —
+		// normalizeFeature maps UNKNOWN to the empty string and the guard above
+		// skips the comparison — so the silence was never broken; all the hack
+		// did was leave behind a function whose name read as a licence to treat
+		// an undetermined tense as a proved one.
+		v.underdetermined = true
+		v.add(soft(DiffTense, item, orNone(s.Tense), t.Tense,
+			"UNDERDETERMINED: the source does not determine its tense and the target commits to "+
+				t.Tense+"; nothing in the source supports or contradicts that choice"),
+			DimTemporal, lossTenseUndetermined, DiffTense)
+	} else if st != "" && tt != "" && st != tt {
 		switch {
-		case equivalentTense(st, tt):
-			v.note("%s: tense %s/%s is licensed by the target language's inflection", item, st, tt)
 		case tenseUnverifiable(t):
 			// The target's own analyser says its verb's spelling does not carry
 			// the tense: English writes read/read, set/set, put/put. Rejecting on
@@ -773,17 +797,6 @@ func tenseUnverifiable(t *jlir.Event) bool {
 		}
 	}
 	return false
-}
-
-// equivalentTense reports whether a tense difference is licensed by the target
-// language rather than a mistranslation: Japanese verbal inflection does not
-// distinguish all English tenses, so a Japanese past may legitimately back a
-// present-in-past reading.
-func equivalentTense(src, tgt string) bool {
-	if src == tgt {
-		return true
-	}
-	return src == jlir.TenseUnknown && tgt == jlir.TensePast
 }
 
 // --- roles and referents --------------------------------------------------
