@@ -106,21 +106,30 @@ var jaTableB = []entry{
 	// no table of Japanese verbs should lack it.
 	//
 	// The readings are deliberately few and weighted low. する is a light verb
-	// and its real sense is supplied by what it attaches to; CHANGE.02 is the
-	// 〜になる reading and CHANGE.06 the 〜となる one, and anything more
-	// confident than this would be the system guessing. An unlisted compound
-	// verb — 勉強する, 到着する — is still unknown, and reporting that is
-	// correct; claiming coverage here would not be.
-	{Base: "する", Spec: "CHANGE.02:0.42 CHANGE.06:0.34 EXIST.01:0.12"},
+	// and its real sense is supplied by what it attaches to.
+	//
+	// The ordering encodes one rule: a reading whose required arguments the
+	// clause can actually supply outranks one whose it cannot. CHANGE.02 and
+	// CHANGE.06 both require a comitative, so 「肥料をやりとりする」 — which has
+	// an object and nothing else — could never satisfy them, and choosing them
+	// on weight alone produced a sentence reported as missing a comitative that
+	// Japanese never wrote. CHANGE.08 and EXIST.02 require only a theme, which
+	// is what a light verb with one argument can fill. The なる readings stay
+	// in the list because when an adjective is present they are the right ones,
+	// and by then the comitative is there.
+	//
+	// An unlisted compound verb — 勉強する, 到着する — is still unknown, and
+	// reporting that is correct; claiming coverage here would not be.
+	{Base: "する", Spec: "CHANGE.08:0.38 EXIST.02:0.28 CHANGE.02:0.18 CHANGE.06:0.12"},
 	// 為る is SudachiDict's lemma for する, and the lookup tries the lemma
 	// before the surface — so listing する alone never matched under the
 	// backend that reports lemmas. The previous commit listed surface forms
 	// only, and would have looked like a closed gap that had changed nothing.
-	{Base: "為る", Spec: "CHANGE.02:0.42 CHANGE.06:0.34 EXIST.01:0.12"},
-	{Base: "為た", Spec: "CHANGE.02:0.42 CHANGE.06:0.34 EXIST.01:0.12"},
-	{Base: "為ている", Spec: "CHANGE.02:0.40 CHANGE.06:0.32 EXIST.01:0.12"},
-	{Base: "した", Spec: "CHANGE.02:0.42 CHANGE.06:0.34 EXIST.01:0.12"},
-	{Base: "してる", Spec: "CHANGE.02:0.40 CHANGE.06:0.32 EXIST.01:0.12"},
+	{Base: "為る", Spec: "CHANGE.08:0.38 EXIST.02:0.28 CHANGE.02:0.18 CHANGE.06:0.12"},
+	{Base: "為た", Spec: "CHANGE.08:0.38 EXIST.02:0.28 CHANGE.02:0.18 CHANGE.06:0.12"},
+	{Base: "為ている", Spec: "CHANGE.08:0.36 EXIST.02:0.26 CHANGE.02:0.18 CHANGE.06:0.12"},
+	{Base: "した", Spec: "CHANGE.08:0.38 EXIST.02:0.28 CHANGE.02:0.18 CHANGE.06:0.12"},
+	{Base: "してる", Spec: "CHANGE.08:0.36 EXIST.02:0.26 CHANGE.02:0.18 CHANGE.06:0.12"},
 	// 来る is the second most basic verb in the language and was missing. Its
 	// direction is contrastive — that is the whole difference between 来る and
 	// 行く — so it cannot be folded into a generic motion sense.
