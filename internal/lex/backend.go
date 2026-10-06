@@ -460,15 +460,42 @@ var auxiliaryTense = map[string]struct {
 // analyser that knows the attachment can tell them apart, so the decision is
 // left to the clause parser rather than guessed here.
 
+// japaneseTerminalForm reports whether the auxiliary is in a clause-final or
+// attributive form. 終止形-一般, 連体形-一般 and 命令形-一般 are; 未然形-* and
+// 中止形-* are not, and the distinction is what separates the copula だ from the
+// conditional auxiliary なら.
+func japaneseTerminalForm(pos []string) bool {
+	for _, el := range pos {
+		switch {
+		case strings.HasPrefix(el, "終止形"), strings.HasPrefix(el, "連体形"),
+			strings.HasPrefix(el, "命令形"):
+			return true
+		case strings.HasPrefix(el, "未然形"), strings.HasPrefix(el, "中止形"):
+			return false
+		}
+	}
+	return false
+}
+
 // applyJapaneseFeatures translates the Universal POS tuple into the feature
 // vocabulary the core reads. A backend that reports a richer analysis should
 // not have to also re-implement the core's conventions.
 func applyJapaneseFeatures(feats map[string]string, pos []string, surface string) {
 	for _, el := range pos {
 		for _, marker := range copulaMarkers {
-			if el == marker || strings.HasSuffix(el, "-"+marker) {
-				feats["copula"] = "1"
+			if el != marker && !strings.HasSuffix(el, "-"+marker) {
+				continue
 			}
+			// The form decides. だ is 助動詞-ダ,終止形-一般 and is the plain
+			// copula; なら is 助動詞-ダ,未然形-ナ and is the conditional
+			// auxiliary, which is a different predicate entirely. Matching the
+			// marker alone read every ダ-auxiliary as a copula, and the
+			// conditional then became the clause head of a sentence that
+			// actually had a verb further along.
+			if !japaneseTerminalForm(pos) {
+				continue
+			}
+			feats["copula"] = "1"
 		}
 		if t, ok := tenseMarkers[el]; ok && t != "" && feats["tense"] == "" {
 			feats["tense"] = t

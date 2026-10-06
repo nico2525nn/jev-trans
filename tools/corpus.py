@@ -51,6 +51,29 @@ def is_rule(line):
     return len(s) >= 3 and set(s) <= set("-=＝")
 
 
+COLOPHON = re.compile(
+    r"(底本|初版|発行|青空文庫|入力|校正|ルビ|翻刻|入力者注)")
+
+
+def is_colophon(line):
+    """Bibliographic front or back matter, not prose.
+
+    The archive appends a colophon to every work: 底本：「新修宮沢賢治全集…」,
+    1983（昭和58）年1月20日初版第4刷発行, （青空文庫）. Those lines are not
+    sentences and counting them as failures understates the real coverage in one
+    direction while pretending the corpus contains material it does not.
+    """
+    s = line.strip()
+    if not s:
+        return True
+    if COLOPHON.search(s):
+        return True
+    # A bare date/edition line.
+    if re.match(r"^\d{3,4}\s*[（(]?昭和|^\d{4}年", s):
+        return True
+    return False
+
+
 def body_lines(text):
     """Drop the Aozora header, the symbol key and the trailing note block.
 
@@ -76,7 +99,7 @@ def body_lines(text):
     else:
         start, end = rules[1] + 1, rules[2]
     out = [strip_ruby(l) for l in lines[start:end]]
-    return "\n".join(l for l in out if not is_boilerplate(l))
+    return "\n".join(l for l in out if not is_boilerplate(l) and not is_colophon(l))
 
 
 SENT_END = re.compile(r"(?<=[。！？!?])(?![」』）])")

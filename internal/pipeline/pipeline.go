@@ -367,7 +367,7 @@ func (e *Engine) Translate(ctx context.Context, req Request) (*Response, error) 
 	//
 	// Computed here, by the code that did the work, and cumulative: a stage
 	// only counts when every earlier stage counted for the same sentence.
-	resp.Metrics = stageMetrics(mf, srcGraph, projection, raw, candidates)
+	resp.Metrics = stageMetrics(mf, bundle, srcGraph, projection, raw, candidates)
 
 	// ---- 17. FINAL OUTPUT -------------------------------------------------
 	rec.Do(trace.StageOutput, "final output", func(s *trace.Span) error {
@@ -888,6 +888,18 @@ var historicalKana = map[rune]rune{
 	'づ': 'ず',
 }
 
+// hasPre1946Kana reports whether the text carries a form a modern lexicon
+// will not know.
+func hasPre1946Kana(s string) bool {
+	for _, r := range s {
+		switch r {
+		case 'ゐ', 'ゑ', 'ゝ', 'ゞ', 'ヽ', 'ヾ':
+			return true
+		}
+	}
+	return false
+}
+
 // normalizeHistoricalKana rewrites pre-1946 kana and expands the iteration
 // marks ゝ (repeats the preceding kana) and ゞ (repeats it with voicing).
 func normalizeHistoricalKana(s string) (string, int) {
@@ -967,17 +979,30 @@ func normalizeInput(s *trace.Span, in string, externalMorph bool) string {
 		}
 	}
 	out := strings.TrimSpace(b.String())
-	// Historical kana are rewritten only when no external analyser is going to
-	// handle them. SudachiDict and the 国語研 old-kana UniDic builds carry ゐ and
-	// the iteration marks as dictionary entries, so rewriting first would destroy
-	// information the better analyser could have used. That is why the rewrite
-	// is a builtin-backend fallback, not a preprocessing step.
-	if out != "" && !externalMorph {
-		if fixed, kana := normalizeHistoricalKana(out); kana > 0 {
-			s.Note("rewrote %d pre-1946 kana character(s) to the modern spelling "+
-				"(ゐ→い, ゑ→え, ふ→う, iteration marks expanded)", kana)
-			changed += kana
-			out = fixed
+	// Historical kana are rewritten when the text is pre-1946 AND the configured
+	// lexicon is the modern one.
+	//
+	// The previous rule was "rewrite only when no external analyser will run", on
+	// the assumption that SudachiDict carries ゐ and the iteration marks. SudachiDict
+	// core does not: it is a modern lexicon, and 27 of 88 sentences in the corpus
+	// failed on exactly ゐる, かゝる, いゝ and こゝら. The right response is to route
+	// old-kana text to the 国語研 old-kana UniDic when one is configured, and to
+	// normalise it when the configured lexicon cannot read it — not to leave it
+	// unanalysable.
+	if out != "" {
+		profile := lex.DetectProfile(out)
+		needsRewrite := profile == lex.ProfileOldKanaColloquial
+		if !needsRewrite && externalMorph {
+			needsRewrite = hasPre1946Kana(out)
+		}
+		if needsRewrite {
+			if fixed, kana := normalizeHistoricalKana(out); kana > 0 {
+				s.Note("pre-1946 orthography detected (profile %s) and the configured "+
+					"lexicon is a modern one: rewrote %d character(s) (ゐ→い, ゑ→え, "+
+					"ふ→う, iteration marks expanded)", profile, kana)
+				changed += kana
+				out = fixed
+			}
 		}
 	}
 	if s != nil && changed > 0 {
@@ -1051,6 +1076,7 @@ func dedupe(in []string) []string {
 // it would report a construction for every sentence that got this far.
 func stageMetrics(
 	mf *forest.MorphForest,
+	bundle *syntax.Bundle,
 	g *jlir.Graph,
 	projection *plan.Projection,
 	raw []forest.Candidate,
@@ -1073,6 +1099,10 @@ func stageMetrics(
 	for _, e := range g.Events {
 		if e.Predicate != "" && !strings.HasPrefix(e.Predicate, "UNKNOWN") {
 			m.PredicatesResolved++
+			continue
+		}
+		if gap := predicateGap(e, g, bundle); gap != nil {
+			m.PredicateGaps = append(m.PredicateGaps, *gap)
 		}
 	}
 	m.PredicatesComplete = m.PredicatesTotal > 0 && m.PredicatesResolved == m.PredicatesTotal
@@ -1102,7 +1132,15 @@ func stageMetrics(
 
 	m.RawCandidates = len(raw)
 	m.AcceptedCandidates = len(accepted)
-	m.Verified = len(accepted)
+	m.Selected = len(accepted)
+	m.EligibleCandidates = len(accepted)
+	m.CertifiedCandidates = 0
+	for _, c := range accepted {
+		if candidateCertified(c) {
+			m.CertifiedCandidates++
+			m.Verified++
+		}
+	}
 	m.OpenPositions = len(g.Unresolved())
 
 	// Cumulative: the funnel only decreases.
@@ -1116,6 +1154,198 @@ func stageMetrics(
 		m.ConstructionsComplete = false
 	}
 	return m
+}
+
+// predicateGap classifies one unresolved clause head.
+//
+// The point is to separate the four causes that look identical in a count: a
+// lexeme nobody has written down, a lexeme that is grounded but has no
+// ontology entry, a clause head the parser picked wrongly, and an auxiliary or
+// copula read as a predicate. Only the first is fixed by writing a dictionary,
+// and a system that cannot tell them apart will keep editing the wrong table.
+func predicateGap(e *jlir.Event, g *jlir.Graph, bundle *syntax.Bundle) *PredicateGap {
+	if e == nil || !strings.HasPrefix(e.Predicate, "UNKNOWN") {
+		return nil
+	}
+	gap := &PredicateGap{
+		Sentence: g.Source,
+		Surface:  strings.TrimSpace(g.Source),
+		Note:     firstProvNote(e, "predicate is not in the lexicon"),
+	}
+	for _, p := range e.Prov {
+		if p.Token != "" {
+			gap.Surface = p.Token
+		}
+	}
+	gap.Cause = "unknown_lexeme"
+	// The clause that produced the event is the authority on what its head was.
+	// The provenance token is the clause span, which is too coarse to act on.
+	if head, lemma, pos, span, unknown, note, cause := clauseHead(bundle, e, g); cause != "" {
+		gap.Cause = cause
+		gap.Lemma = lemma
+		gap.POS = pos
+		gap.SurfaceAll = span
+		gap.MorphUnknown = unknown
+		if head != "" {
+			gap.Surface = head
+		} else if span != "" {
+			gap.Surface = span
+		}
+		if note != "" {
+			gap.Note = note
+		}
+	}
+	if gap.Surface == "" || gap.Surface == strings.TrimSpace(g.Source) {
+		gap.Cause = "no_clause_head"
+		gap.Note = "the clause has no overt predicate; the analysis could not choose a head"
+		return gap
+	}
+	// An auxiliary or a copula read as a predicate is a parser question, not a
+	// dictionary one, and writing it down would make it worse.
+	switch gap.POS {
+	case "AUX":
+		gap.Cause = "auxiliary"
+	case "ADJ":
+		gap.Cause = "adjective_predicate"
+	}
+	return gap
+}
+
+// clauseHead returns the surface the parser chose as the predicate for an
+// event, with the morpheme facts needed to decide whether the gap is a missing
+// lexeme or a wrong head.
+func clauseHead(bundle *syntax.Bundle, e *jlir.Event, g *jlir.Graph) (head, lemma, pos, span string, unknown bool, note string, cause string) {
+	if bundle == nil {
+		return
+	}
+	for _, c := range bundle.Clauses {
+		if !clauseHasUnknown(c, g, e) {
+			continue
+		}
+		if c.Matrix == "" {
+			// No overt predicate at all. That is a segmentation result, not a
+			// missing dictionary entry, and reporting it as one sends whoever
+			// reads this to the wrong table.
+			span = clauseText(bundle, c)
+			note = "the clause has no overt predicate"
+			for _, n := range c.Notes {
+				if strings.Contains(n, "fragment") || strings.Contains(n, "no finite") {
+					note = n
+				}
+			}
+			return "", "", "", span, true, note, "no_clause_head"
+		}
+		m := bundle.Morph(c.Matrix)
+		if m == nil {
+			note = "the clause head does not resolve to a morpheme"
+			return "", "", "", span, true, note, "no_clause_head"
+		}
+		head = m.Surface
+		lemma = m.Lem
+		pos = string(m.POS)
+		if len(c.Notes) > 0 {
+			note = c.Notes[0]
+		}
+		var parts []string
+		for _, id := range c.Auxiliaries {
+			if am := bundle.Morph(id); am != nil {
+				parts = append(parts, am.Surface)
+				if !am.Dict {
+					unknown = true
+				}
+			}
+		}
+		if !m.Dict {
+			unknown = true
+		}
+		span = head + strings.Join(parts, "")
+		return head, lemma, pos, span, unknown, note, "unknown_lexeme"
+	}
+	return
+}
+
+func clauseText(bundle *syntax.Bundle, c *syntax.Clause) string {
+	ids := append([]string(nil), c.Adverbs...)
+	for _, id := range c.Auxiliaries {
+		if m := bundle.Morph(id); m != nil {
+			ids = append(ids, id)
+		}
+	}
+	if c.Matrix != "" {
+		ids = append(ids, c.Matrix)
+	}
+	var parts []string
+	for _, id := range ids {
+		if m := bundle.Morph(id); m != nil {
+			parts = append(parts, m.Surface)
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func clauseHasUnknown(c *syntax.Clause, g *jlir.Graph, e *jlir.Event) bool {
+	if c == nil {
+		return false
+	}
+	// The semantic layer records the predicate provenance against the clause's
+	// span, so an exact match is the normal case; overlap covers a clause the
+	// caller built by hand.
+	for _, p := range e.Prov {
+		if p.Span == nil {
+			continue
+		}
+		if *p.Span == c.Span {
+			return true
+		}
+		if p.Span.Start < c.Span.End && c.Span.Start < p.Span.End {
+			return true
+		}
+	}
+	return len(e.Args) == 0 && c.Matrix != ""
+}
+
+func firstProvNote(e *jlir.Event, contains string) string {
+	for _, p := range e.Prov {
+		if strings.Contains(p.Note, contains) {
+			return p.Note
+		}
+	}
+	for _, p := range e.Prov {
+		if p.Note != "" {
+			return p.Note
+		}
+	}
+	return ""
+}
+
+// candidateCertified reports whether equivalence was actually PROVED, as
+// opposed to the gate merely declining to reject.
+//
+// The distinction matters because the two are easy to conflate and the
+// difference is the whole point of the system: a candidate that passed with
+// UNDERDETERMINED has not been shown to mean the same thing as its source, it
+// has been shown that the system could not tell. Counting that as verified
+// would put a number in the report that the evidence does not support.
+func candidateCertified(c Candidate) bool {
+	switch Status(c.Status) {
+	case StatusExact, StatusGood:
+	default:
+		return false
+	}
+	for _, d := range c.Diffs {
+		if d.Severity == verify.SeverityHard {
+			return false
+		}
+	}
+	if len(c.Unsupported) > 0 {
+		return false
+	}
+	for _, n := range c.Notes {
+		if strings.Contains(n, "UNDERDETERMINED") {
+			return false
+		}
+	}
+	return true
 }
 
 // frameLosses names why an event is missing a role its frame requires.

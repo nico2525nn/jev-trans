@@ -198,6 +198,17 @@ type StageMetrics struct {
 	RawCandidates      int `json:"rawCandidates"`
 	AcceptedCandidates int `json:"acceptedCandidates"`
 	Verified           int `json:"verified"`
+	// EligibleCandidates passed the hard gate but are not certified: they are
+	// the ones whose equivalence could not be settled, chiefly because the
+	// target language needs a distinction the source cannot supply. Passing the
+	// gate and proving equivalence are different claims and the metric has to
+	// keep them apart, or "verification passed" starts counting sentences the
+	// system merely declined to reject.
+	EligibleCandidates int `json:"eligibleCandidates"`
+	// CertifiedCandidates proved equivalence: no hard diff, no unsupported
+	// information, no unresolved reading left open.
+	CertifiedCandidates int `json:"certifiedCandidates"`
+	Selected            int `json:"selected"`
 
 	// OpenPositions counts ambiguity carried unresolved into the target, which
 	// is plan.md section 13 and 15 doing their job rather than a defect.
@@ -211,6 +222,33 @@ type StageMetrics struct {
 	// with it the drop is a list of causes and the next fix is chosen from the
 	// most frequent one. Values are stable slugs, not prose.
 	FrameLosses []string `json:"frameLosses,omitempty"`
+
+	// PredicateGaps records every clause head that did not become a predicate,
+	// with enough context to tell a missing lexeme from a wrong clause head
+	// from a misclassified auxiliary. A bare count of "73 unknown predicates"
+	// does not say whether to write a dictionary, fix the parser, or both.
+	PredicateGaps []PredicateGap `json:"predicateGaps,omitempty"`
+}
+
+// PredicateGap is one unresolved clause head.
+type PredicateGap struct {
+	Sentence string `json:"sentence"`
+	Surface  string `json:"surface"`
+	Lemma    string `json:"lemma,omitempty"`
+	POS      string `json:"pos,omitempty"`
+	// Cause is a stable slug: unknown_lexeme | unknown_pos | auxiliary |
+	// no_clause_head | unknown_surface
+	Cause string `json:"cause"`
+	// SurfaceAll lists every token the clause head turned out to span, which is
+	// how a wrong head (a copula picked for what was really ている) becomes
+	// visible.
+	SurfaceAll string `json:"surfaceAll,omitempty"`
+	// MorphUnknown marks that the head's own morphemes were not all grounded,
+	// which separates "the analyser could not see it" from "we have never
+	// written it down".
+	MorphUnknown bool `json:"morphUnknown,omitempty"`
+	// Note carries the parser's own explanation when it gave one.
+	Note string `json:"note,omitempty"`
 }
 
 // Artifacts is everything the UI renders as evidence.

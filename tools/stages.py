@@ -77,11 +77,12 @@ def main():
 
     counts = {name: 0 for name, *_ in STAGES}
     tokens = opaque = 0
-    raw = accepted = 0
+    raw = eligible = certified = selected = 0
     reached_verb = 0
     missing_metrics = 0
     examples = {}
     losses = {}
+    gaps = []
 
     for s in sentences:
         m = measure(s)
@@ -93,9 +94,12 @@ def main():
         tokens += m.get("tokens", 0)
         opaque += m.get("opaqueTokens", 0)
         raw += m.get("rawCandidates", 0)
-        accepted += m.get("acceptedCandidates", 0)
+        eligible += m.get("eligibleCandidates", 0)
+        certified += m.get("certifiedCandidates", 0)
+        selected += m.get("selected", 0)
         for why in m.get("frameLosses") or []:
             losses[why] = losses.get(why, 0) + 1
+        gaps.extend(m.get("predicateGaps") or [])
 
         for name, key, *kind in STAGES:
             if kind and kind[0] == "positive":
@@ -128,12 +132,29 @@ def main():
     ratio = (opaque / tokens * 100) if tokens else 0.0
     print(f"\n  opaque surfaces           {opaque}/{tokens} = {ratio:.1f}%")
     print(f"  raw candidates           {raw}")
-    print(f"  accepted by the gate     {accepted}")
-    print(f"  dropped by the gate      {raw - accepted}")
+    print(f"  eligible (gate passed)   {eligible}")
+    print(f"  certified (proved)       {certified}")
+    print(f"  selected                 {selected}")
+    print(f"  dropped by the gate      {raw - eligible}")
     if losses:
         print("\n  why arguments were lost")
         for why, n in sorted(losses.items(), key=lambda kv: -kv[1]):
             print(f"    {n:3}  {why}")
+    if gaps:
+        print("\n  unresolved clause heads")
+        by_cause = {}
+        for gap in gaps:
+            key = gap.get("cause", "?")
+            by_cause.setdefault(key, []).append(gap)
+        for cause, items in sorted(by_cause.items(), key=lambda kv: -len(kv[1])):
+            heads = {}
+            for g in items:
+                heads[g.get("surface") or "?"] = heads.get(g.get("surface") or "?", 0) + 1
+            distinct = len(heads)
+            top = sorted(heads.items(), key=lambda kv: -kv[1])[:8]
+            print(f"    {len(items):3}  {cause}  ({distinct} distinct heads)")
+            for h, n in top:
+                print(f"         {n:3}x {h}")
     for name, (s, m) in examples.items():
         print(f"\n  e.g. {name}: {s}")
         print("       " + json.dumps(m, ensure_ascii=False, sort_keys=True))
