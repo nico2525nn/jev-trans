@@ -503,3 +503,37 @@ func backendEngine(t *testing.T, backend string) *pipeline.Engine {
 	}
 	return builtinEngine(t)
 }
+
+// "unknown" is a sentinel, not a register.
+//
+// The pragmatics layer writes SpeechStyle "unknown" when the morphology
+// decides nothing, which is the correct conservative behaviour: guessing plain
+// because no polite marker was found would be an invented claim about
+// register. The verifier then compared a determined source style against that
+// sentinel and charged "speech style changed from plain to unknown" — the
+// checker reporting that it knew nothing as though the target had said
+// something.
+//
+// The target side is re-analysed from English, which carries no polite
+// auxiliary to read, so this was the common case rather than an edge one. It is
+// the same distinction compareNumber already makes: an unexpressed layer is not
+// a claim the other side contradicts.
+func TestUnknownRegisterIsNotADiff(t *testing.T) {
+	resp := mustTranslate(t, engine(t), "誰かが云ふ。")
+	if resp.Result.Selected == nil {
+		t.Fatal("no candidate")
+	}
+	sel := resp.Result.Selected
+	for _, d := range sel.Diffs {
+		if strings.Contains(d.Detail, "to unknown") {
+			t.Errorf("an undetermined register was charged as a change: %q", d.Detail)
+		}
+	}
+	// And the diff that remains must be a real one, not the sentinel.
+	for _, d := range sel.Diffs {
+		if d.Detail == "referent alignment could not be checked lexically" {
+			continue
+		}
+		t.Logf("remaining diff: %s/%s %s", d.Dimension, d.Severity, d.Detail)
+	}
+}

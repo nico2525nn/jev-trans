@@ -1210,7 +1210,23 @@ func (v *verifier) comparePragmatics() {
 			"politeness differs by "+fmt.Sprint(round3(d))),
 			DimPragmatic, min1(d*0.2), DiffPragmatics, DiffRegister)
 	}
-	if v.src.Prag.SpeechStyle != "" && v.tgt.Prag.SpeechStyle != "" &&
+	// styleUnknown is the pragmatics layer's "the morphology decided nothing". It
+// is a sentinel, not a register, and the comparison below must not treat it as
+// one.
+const styleUnknown = "unknown"
+
+// "unknown" is the pragmatics layer's way of saying the morphology decided
+	// nothing, not a register the sentence is in. Comparing a determined source
+	// style against it produced "speech style changed from plain to unknown"
+	// and charged a loss for the checker admitting it knew nothing. The target
+	// side is re-analysed from English, which carries no polite auxiliary to
+	// read, so this was the common case rather than an edge one.
+	//
+	// It is the same distinction compareNumber already makes: UNKNOWN on either
+	// side is an unexpressed layer, and an unexpressed layer is not a claim the
+	// other side contradicts.
+	if v.src.Prag.SpeechStyle != "" && v.src.Prag.SpeechStyle != styleUnknown &&
+		v.tgt.Prag.SpeechStyle != "" && v.tgt.Prag.SpeechStyle != styleUnknown &&
 		v.src.Prag.SpeechStyle != v.tgt.Prag.SpeechStyle {
 		v.add(soft(DiffPragmatics, "style", v.src.Prag.SpeechStyle, v.tgt.Prag.SpeechStyle,
 			"speech style changed from "+v.src.Prag.SpeechStyle+" to "+v.tgt.Prag.SpeechStyle),
