@@ -350,6 +350,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		},
 		"sourceLang": string(lang.JA),
 		"targetLang": string(lang.EN),
+		// Which predicate knowledge answered. Without this an unresolved
+		// predicate looks like a bug in the system rather than a word nothing
+		// configured here knows, and the two lead to completely different next
+		// steps for whoever is reading the trace.
+		"predicateProviders": s.cfg.Engine.PredicateProviders(),
 	})
 }
 

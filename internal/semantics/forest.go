@@ -54,7 +54,16 @@ type Forest struct {
 //
 // The readings are normalized to sum to one and sorted by descending weight.
 // At most maxReadings survive; a sentence with no ambiguity yields exactly one.
-func BuildForest(b *syntax.Bundle, src lang.Lang) *Forest {
+// BuildForest turns a parse into every reading the analysis admits.
+//
+// prov is the chain that supplies predicate knowledge. Passing nil installs the
+// curated table, so the common case stays a one-argument call while an operator
+// that has an external inventory can name it at configuration time rather than
+// have it discovered from the environment on every sentence.
+func BuildForest(b *syntax.Bundle, src lang.Lang, prov *lexicon.Set) *Forest {
+	if prov == nil {
+		prov = lexicon.NewSet(lexicon.NewTableProvider(lexicon.Default()))
+	}
 	f := &Forest{Lang: src}
 	if b != nil {
 		f.Source = b.Source
@@ -65,16 +74,16 @@ func BuildForest(b *syntax.Bundle, src lang.Lang) *Forest {
 
 	// The base reading always exists: an empty bundle or a bundle with no clause
 	// must still produce a usable graph rather than an error downstream.
-	base, _ := buildWith(b, src, nil, nil)
+	base, _ := buildWith(b, src, nil, nil, prov)
 	if base == nil {
 		base = unparsableGraph(b, src, "no reading could be constructed")
 	}
 	base.Weight = 1
 	readings := []Reading{{Graph: base, Weight: 1, Origin: "base"}}
 
-	variants := enumerateVariants(b, src)
+	variants := enumerateVariants(b, src, prov)
 	for _, v := range variants {
-		g, _ := buildWith(b, src, v.overrides, v.senses)
+		g, _ := buildWith(b, src, v.overrides, v.senses, prov)
 		if g == nil {
 			continue
 		}
@@ -129,7 +138,7 @@ type variant struct {
 // a clause contributes at most one alternative and a predicate at most three
 // senses, so the enumeration stays small enough to be useful rather than
 // combinatorial.
-func enumerateVariants(b *syntax.Bundle, src lang.Lang) []variant {
+func enumerateVariants(b *syntax.Bundle, src lang.Lang, prov *lexicon.Set) []variant {
 	if b == nil {
 		return nil
 	}
@@ -137,7 +146,7 @@ func enumerateVariants(b *syntax.Bundle, src lang.Lang) []variant {
 		src = b.Lang
 	}
 	ja := src == lang.JA
-	lex := lexicon.ProviderFromEnv()
+	lex := prov
 	onto := ontology.Default()
 
 	var out []variant

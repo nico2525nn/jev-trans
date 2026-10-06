@@ -160,13 +160,21 @@ func (e *Engine) Translate(ctx context.Context, req Request) (*Response, error) 
 	// ---- 4. SOURCE SEMANTIC FOREST ----------------------------------------
 	var semForest *semantics.Forest
 	rec.Do(trace.StageSemantic, "source semantic forest", func(s *trace.Span) error {
-		semForest = semantics.BuildForest(bundle, req.SourceLang)
+		semForest = semantics.BuildForest(bundle, req.SourceLang, e.predicates)
 		if semForest == nil || len(semForest.Readings) == 0 {
 			return errors.New("no semantic reading could be constructed")
 		}
 		resp.Artifacts.SemanticForest = semForest
 		s.Data(semForest)
 		s.Count("readings", len(semForest.Readings))
+		// Name the predicate knowledge that answered, so an unresolved
+		// predicate can be read as "nothing in the configured chain knows this
+		// word" rather than as an unexplained gap.
+		// Labels are a map, so one key holds one value: the chain is named as a
+		// whole rather than one label per provider.
+		if names := e.predicates.Names(); len(names) > 0 {
+			s.Label("predicate providers", strings.Join(names, " + "))
+		}
 		if len(semForest.Readings) > 1 {
 			s.Status(trace.StatusWarn)
 			s.Note("%d source readings kept open; ambiguity is preserved rather than resolved by fiat",
@@ -619,7 +627,7 @@ func (e *Engine) verifyCandidates(ctx context.Context, rec *trace.Recorder, req 
 			blank++
 			continue
 		}
-		tgt := verify.Reparse(c.Text, req.TargetLang)
+		tgt := verify.Reparse(c.Text, req.TargetLang, e.predicates)
 		kept = append(kept, keptCand{cand: c, graph: tgt})
 		texts = append(texts, c.Text)
 		if tgt == nil {

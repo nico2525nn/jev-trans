@@ -42,7 +42,15 @@ import (
 // The caller owns the trace span for this stage. This function is deliberately
 // trace-free so a re-parse never opens a second span behind the caller's back,
 // the same discipline RankWith follows.
-func Reparse(text string, l lang.Lang) (g *jlir.Graph) {
+// Reparse re-analyses a target sentence with the same predicate knowledge the
+// forward pass used.
+//
+// prov must be the same chain the source analysis was built from, or the
+// comparison is not a verification of anything: a target whose predicate the
+// forward pass resolved through an external inventory would come back
+// unresolved here, and the system would report a loss that is an artefact of
+// the checker knowing less than the thing it is checking.
+func Reparse(text string, l lang.Lang, prov *lexicon.Set) (g *jlir.Graph) {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
@@ -70,7 +78,7 @@ func Reparse(text string, l lang.Lang) (g *jlir.Graph) {
 		return nil
 	}
 
-	graph := compose(bundle, l)
+	graph := compose(bundle, l, prov)
 	if graph == nil {
 		return nil
 	}
@@ -108,9 +116,12 @@ func analyzeAndParse(text string, l lang.Lang) *syntax.Bundle {
 // graph. It is a named seam rather than an inline call so that the exact
 // semantic entry point is asserted in one place: the pipeline contract pins it
 // as semantics.Build(bundle *syntax.Bundle, src lang.Lang) *jlir.Graph.
-func compose(b *syntax.Bundle, l lang.Lang) *jlir.Graph {
+func compose(b *syntax.Bundle, l lang.Lang, prov *lexicon.Set) *jlir.Graph {
 	if b == nil {
 		return nil
 	}
-	return semantics.Build(b, l)
+	if prov == nil {
+		return semantics.Build(b, l)
+	}
+	return semantics.BuildWith(b, l, prov)
 }

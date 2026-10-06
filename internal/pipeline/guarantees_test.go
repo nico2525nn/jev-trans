@@ -307,7 +307,7 @@ func TestRealizeIsIndependentlyExercisable(t *testing.T) {
 // compare against the original, and must not crash or fabricate.
 func TestRoundTripIsStable(t *testing.T) {
 	src := semantics.Analyze("私は行きます。", lang.JA)
-	en := verify.Reparse("I go.", lang.EN)
+	en := verify.Reparse("I go.", lang.EN, nil)
 	if en == nil {
 		t.Fatal("could not re-parse the round-trip target")
 	}

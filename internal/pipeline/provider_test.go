@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico/jev-trans/internal/lexicon"
 	"github.com/nico/jev-trans/internal/pipeline"
 )
 
@@ -100,4 +101,46 @@ func translateDoc(t *testing.T, text, doc string) *pipeline.Response {
 		t.Fatalf("Translate(%q) returned %v", text, err)
 	}
 	return resp
+}
+
+// The chain is configuration, not an environment read. A process that sets
+// JEV_LEXICON_TSV must not change the behaviour of an engine that was built
+// with its own chain, or the answer depends on a moment the caller cannot see
+// or record — and a verification run would not be reproducible.
+func TestConfiguredChainWinsOverTheEnvironment(t *testing.T) {
+	t.Setenv("JEV_SUDACHI_ADAPTER", "off")
+	path := writeInventory(t, "現れる\tMOVE.02:0.9\n現れる\tMOVE.02:0.9\n")
+
+	// An engine with no chain of its own inherits the environment, which is the
+	// documented default and the state of a process configured only by env vars.
+	t.Setenv("JEV_LEXICON_TSV", path)
+	fromEnv, err := pipeline.NewEngine(pipeline.EngineConfig{DefaultMode: "interactive"}).
+		Translate(t.Context(), pipeline.Request{
+			Text: providerSrc, SourceLang: lang.JA, TargetLang: lang.EN,
+			DocumentID: "env-chain", Mode: "full",
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fromEnv.Metrics.PredicateGaps) != 0 {
+		t.Fatalf("the environment chain must apply when none is configured: %+v",
+			fromEnv.Metrics.PredicateGaps)
+	}
+
+	// An engine given the curated table alone must ignore the environment
+	// entirely and leave the predicate open.
+	curated := lexicon.NewSet(lexicon.NewTableProvider(lexicon.Default()))
+	explicit, err := pipeline.NewEngine(pipeline.EngineConfig{
+		DefaultMode: "interactive", Predicates: curated,
+	}).Translate(t.Context(), pipeline.Request{
+		Text: providerSrc, SourceLang: lang.JA, TargetLang: lang.EN,
+		DocumentID: "explicit-chain", Mode: "full",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(explicit.Metrics.PredicateGaps) != 1 {
+		t.Fatalf("an explicitly configured chain must override the environment, got %+v",
+			explicit.Metrics.PredicateGaps)
+	}
 }

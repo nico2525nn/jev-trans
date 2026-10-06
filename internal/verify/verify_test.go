@@ -423,14 +423,14 @@ func TestReparseSurvivesUnparsableInput(t *testing.T) {
 		{"\U0001F600", lang.JA},
 		{"", ""},
 	} {
-		if g := Reparse(in.text, in.l); g != nil && len(g.Events) == 0 && len(g.Entities) == 0 {
+		if g := Reparse(in.text, in.l, nil); g != nil && len(g.Events) == 0 && len(g.Entities) == 0 {
 			t.Errorf("Reparse(%q, %q) returned an empty graph rather than nil", in.text, in.l)
 		}
 	}
 }
 
 func TestReparseBuildsAComparableGraph(t *testing.T) {
-	g := Reparse("Taro gave a book to Hanako.", lang.EN)
+	g := Reparse("Taro gave a book to Hanako.", lang.EN, nil)
 	if g == nil {
 		t.Fatal("could not re-parse a well-formed English target")
 	}

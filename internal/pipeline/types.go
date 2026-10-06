@@ -17,6 +17,7 @@ import (
 	"github.com/nico/jev-trans/internal/lang"
 	"github.com/nico/jev-trans/internal/lex"
 	"github.com/nico/jev-trans/internal/lexgen"
+	"github.com/nico/jev-trans/internal/lexicon"
 	"github.com/nico/jev-trans/internal/plan"
 	"github.com/nico/jev-trans/internal/semantics"
 	"github.com/nico/jev-trans/internal/syntax"
@@ -298,6 +299,17 @@ type EngineConfig struct {
 	Morph *lex.Registry
 	// MorphProfile selects which lexicon the backend should use.
 	MorphProfile lex.Profile
+	// Predicates is the chain that supplies predicate knowledge. Nil installs
+	// the curated table, which is the state of a process that configured
+	// nothing — the same rule Morph follows, so the two halves of the analysis
+	// stack fail the same way.
+	//
+	// It is configuration rather than an environment read inside the analyzer
+	// for two reasons. An env read per analyze() call re-reads and re-parses the
+	// inventory on every sentence, and it makes the answer depend on the
+	// process environment at a moment the caller cannot see or record. Setting
+	// it once at construction puts the choice where the trace can name it.
+	Predicates *lexicon.Set
 	// ExternalMorph records that a morphological backend outside this package
 	// will answer. It disables the builtin historical-kana rewrite, which
 	// exists only so the in-house dictionary can cope and would destroy
@@ -321,6 +333,9 @@ type Engine struct {
 	stores map[string]*discourse.Store
 	lex    *lexgen.Lexicalizer
 	morph  *lex.Registry
+	// predicates is resolved once, at construction, so the answer does not
+	// depend on the process environment at a moment the caller cannot see.
+	predicates *lexicon.Set
 }
 
 // NewEngine builds an Engine with sane defaults.
@@ -338,13 +353,30 @@ func NewEngine(cfg EngineConfig) *Engine {
 	if morph == nil {
 		morph = lex.NewRegistry()
 	}
+	predicates := cfg.Predicates
+	if predicates == nil {
+		predicates = lexicon.ProviderFromEnv()
+	}
 	return &Engine{
-		cfg:    cfg,
-		stores: map[string]*discourse.Store{},
-		lex:    lexgen.Default(),
-		morph:  morph,
+		cfg:        cfg,
+		stores:     map[string]*discourse.Store{},
+		lex:        lexgen.Default(),
+		morph:      morph,
+		predicates: predicates,
 	}
 }
 
 // Config exposes the engine configuration to the server for /api/health.
 func (e *Engine) Config() EngineConfig { return e.cfg }
+
+// PredicateProviders names the predicate knowledge this engine consults, in
+// preference order. It is part of the health surface because the two states
+// "the chain is the curated table alone" and "the chain could not load its
+// inventory" produce identical translations and must not look identical from
+// the outside.
+func (e *Engine) PredicateProviders() []string {
+	if e == nil {
+		return nil
+	}
+	return e.predicates.Names()
+}

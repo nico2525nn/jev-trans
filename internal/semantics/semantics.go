@@ -93,14 +93,26 @@ func senseAltNote(alt map[string]float64) string {
 // It must never panic. A bundle it cannot interpret yields a graph with
 // UNPARSABLE semantics and a recorded note, not a crash: plan.md §24 requires
 // parser failure to be survivable, and the layer above it inherits the duty.
+// Build turns one parse into one JLIR graph using the curated predicate table.
+// Callers with an external inventory should use BuildWith.
 func Build(b *syntax.Bundle, src lang.Lang) *jlir.Graph {
-	g, _ := buildWith(b, src, nil, nil)
+	g, _ := buildWith(b, src, nil, nil, nil)
+	return g
+}
+
+// BuildWith is Build with an explicit predicate provider chain.
+func BuildWith(b *syntax.Bundle, src lang.Lang, prov *lexicon.Set) *jlir.Graph {
+	g, _ := buildWith(b, src, nil, nil, prov)
 	return g
 }
 
 // buildWith is Build with the two overrides BuildForest needs: an alternative
 // clause to substitute, and a predicate sense to force for a clause.
-func buildWith(b *syntax.Bundle, src lang.Lang, override map[string]*syntax.Clause, forced map[string]string) (*jlir.Graph, string) {
+func buildWith(b *syntax.Bundle, src lang.Lang, override map[string]*syntax.Clause,
+	forced map[string]string, prov *lexicon.Set) (*jlir.Graph, string) {
+	if prov == nil {
+		prov = lexicon.NewSet(lexicon.NewTableProvider(lexicon.Default()))
+	}
 	rec := ambientRecorder()
 	var sp *trace.Span
 	if rec != nil {
@@ -108,7 +120,7 @@ func buildWith(b *syntax.Bundle, src lang.Lang, override map[string]*syntax.Clau
 		defer sp.Close()
 	}
 
-	g, origin := safeBuild(b, src, override, forced)
+	g, origin := safeBuild(b, src, override, forced, prov)
 	if sp != nil {
 		sp.Data(g)
 		if g != nil {
@@ -130,14 +142,15 @@ func buildWith(b *syntax.Bundle, src lang.Lang, override map[string]*syntax.Clau
 
 // safeBuild contains every panic the analysis could raise and reports the
 // failure as an UNPARSABLE graph instead of propagating it.
-func safeBuild(b *syntax.Bundle, src lang.Lang, override map[string]*syntax.Clause, forced map[string]string) (g *jlir.Graph, origin string) {
+func safeBuild(b *syntax.Bundle, src lang.Lang, override map[string]*syntax.Clause,
+	forced map[string]string, prov *lexicon.Set) (g *jlir.Graph, origin string) {
 	defer func() {
 		if r := recover(); r != nil {
 			g = unparsableGraph(b, src, fmt.Sprintf("semantic analysis failed: %v", r))
 			origin = "recovery"
 		}
 	}()
-	return analyze(b, src, override, forced)
+	return analyze(b, src, override, forced, prov)
 }
 
 // unparsableGraph is the empty-but-valid graph returned when analysis cannot
@@ -206,7 +219,8 @@ func phraseSeen(set map[string]bool, sp jlir.Span) bool {
 	return set[phraseKey(sp)]
 }
 
-func analyze(b *syntax.Bundle, src lang.Lang, override map[string]*syntax.Clause, forced map[string]string) (*jlir.Graph, string) {
+func analyze(b *syntax.Bundle, src lang.Lang, override map[string]*syntax.Clause,
+	forced map[string]string, prov *lexicon.Set) (*jlir.Graph, string) {
 	if b == nil {
 		return unparsableGraph(nil, src, "no parse bundle"), "empty"
 	}
@@ -224,7 +238,7 @@ func analyze(b *syntax.Bundle, src lang.Lang, override map[string]*syntax.Clause
 		jb:          jb,
 		onto:        ontology.Default(),
 		lex:         lexicon.Default(),
-		prov:        lexicon.ProviderFromEnv(),
+		prov:        prov,
 		ents:        map[string]*jlir.Entity{},
 		phraseSpans: map[string]bool{},
 	}
