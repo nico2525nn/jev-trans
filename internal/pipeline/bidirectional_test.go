@@ -537,3 +537,52 @@ func TestUnknownRegisterIsNotADiff(t *testing.T) {
 		t.Logf("remaining diff: %s/%s %s", d.Dimension, d.Severity, d.Detail)
 	}
 }
+
+// A や-coordinated object is one argument with two conjuncts.
+//
+// や closed the noun phrase as if it were a case particle, so the second
+// conjunct opened a phrase of its own and then lost the を-slot to the first.
+// On the corpus 「肥料や薪炭を」 came out carrying 薪炭 and no 肥料 at all — the
+// conjunct was absent from the translation, not degraded, and the event
+// asserted half of what the sentence said.
+func TestYaCoordinationKeepsBothConjuncts(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, backend string) {
+		e := backendEngine(t, backend)
+		// 本 and 紙 are in both dictionaries, so this tests the coordination
+		// rule rather than the analyser's vocabulary. A sentence one backend
+		// cannot segment would turn a parser assertion into a dictionary test.
+		resp, err := e.Translate(t.Context(), pipeline.Request{
+			Text: "本や紙を買った。", SourceLang: lang.JA, TargetLang: lang.EN,
+			DocumentID: t.Name(), Mode: "auto",
+			Style: plan.StyleProfile{Register: plan.RegisterNeutral, Politeness: 0.5},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		obj := resp.Artifacts.Syntax.Clauses[0].Object
+		if obj == nil {
+			t.Fatalf("%s: no object", backend)
+		}
+		if obj.Case != "wo" {
+			t.Errorf("%s: the coordinated phrase took the を-slot, got case %q", backend, obj.Case)
+		}
+		text := obj.Span.Text(resp.JLIR.Source.Source)
+		if !strings.Contains(text, "本") || !strings.Contains(text, "紙") {
+			t.Errorf("%s: the object span %q must contain both conjuncts", backend, text)
+		}
+		if len(obj.Conjoined) != 1 {
+			t.Errorf("%s: want exactly one conjunct recorded, got %v", backend, obj.Conjoined)
+		}
+		// And both must reach the graph, not just the parse.
+		var aliases []string
+		for _, en := range resp.JLIR.Source.Entities {
+			for _, al := range en.Aliases {
+				aliases = append(aliases, al.Surface)
+			}
+		}
+		joined := strings.Join(aliases, " ")
+		if !strings.Contains(joined, "本") || !strings.Contains(joined, "紙") {
+			t.Errorf("%s: a conjunct never reached the graph; entities carry %v", backend, aliases)
+		}
+	})
+}

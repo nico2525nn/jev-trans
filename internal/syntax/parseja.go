@@ -486,6 +486,19 @@ func (p *jaParse) arguments(c *Clause, sp jaSpan) {
 			}
 			c.Adnominals = append(c.Adnominals, m.ID)
 
+		case m.Case() == "ya" && np != nil && np.head >= 0:
+			// 「肥料や薪炭を」 is one object with two conjuncts, not two
+			// noun phrases that happen to sit next to each other.
+			//
+			// や closed the phrase as if it were a case particle, so 薪炭
+			// opened a new one and competed with 肥料 for the を-object,
+			// losing. The conjunct was dropped from the translation entirely —
+			// not degraded, absent — and the event kept half of what the
+			// sentence said.
+			np.to = i + 1
+			np.conjoined = append(np.conjoined, i)
+			continue
+
 		case jaIsMarkingParticle(m):
 			if np != nil && np.head >= 0 {
 				// 「誰かが来た」 is one pronoun followed by が, not a pronoun, an
@@ -502,6 +515,10 @@ func (p *jaParse) arguments(c *Clause, sp jaSpan) {
 						"plus a stray particle", p.ms[np.head].Surface)
 				}
 				ph := p.phraseOf(np)
+				if len(ph.Conjoined) > 0 {
+					p.note(c, "%s is coordinated with %d conjunct(s) inside the や-phrase",
+						ph.Span.Text(p.src), len(ph.Conjoined))
+				}
 				p.attach(c, ph, m.Case())
 				if ph.Case == "to" {
 					lastToPhrase = ph
@@ -520,6 +537,12 @@ func (p *jaParse) arguments(c *Clause, sp jaSpan) {
 				np = &jaNP{from: i, head: i, to: i + 1}
 			case np.head < 0:
 				np.head = i
+				np.to = i + 1
+			case np.conjoined != nil && len(np.conjoined) > 0 && np.conjoined[len(np.conjoined)-1] == i-1:
+				// The word after a や belongs to the phrase that や opened.
+				// Without this the conjunct started a noun phrase of its own and
+				// then lost the を-slot to the first conjunct, which is how
+				// 「肥料や薪炭を」 came out carrying 薪炭 and no 肥料 at all.
 				np.to = i + 1
 			case jaIsQuantity(m):
 				np.to = i + 1

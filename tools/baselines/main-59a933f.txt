@@ -1,0 +1,50 @@
+
+76 sentences
+
+  morphology resolved       68/76
+  predicate resolved        28/76   (-40)
+  semantic frame resolved   26/76   (-2)
+  construction available    16/76   (-10)
+  candidate generated       16/76
+  verification passed        0/76   (-16)
+
+  opaque surfaces           9/959 = 0.9%
+  raw candidates           219
+  eligible (gate passed)   4
+  certified (proved)       0
+  selected                 4
+  dropped by the gate      215
+
+  why arguments were lost
+     61  unknown_predicate:UNKNOWN.VERB
+      4  missing_role:recipient
+      4  missing_role:comitative
+      3  missing_role:theme
+      1  unknown_predicate:MOVE.01
+
+  unresolved clause heads
+    by tier: sentence_matrix=56, fragment=5
+    by backend: sudachi=61
+    by pos: VERB=50, AUX=6, (none)=5
+     50  unknown_lexeme  (35 distinct heads)
+           4x 落ち
+           3x ゆらい
+           3x 置きすて
+           3x きらめき
+           2x 浮ん
+           2x 撲りつけ
+           2x 興さ
+           2x 光っ
+      6  auxiliary  (2 distinct heads)
+           5x な
+           1x だ
+      5  no_clause_head  (5 distinct heads)
+           1x それはいい。
+           1x その成分こそはたしかによあけの白光らしい。
+           1x 安山岩の柱状節理、安山岩の板状節理。
+           1x 銀色の雲の下。
+           1x 癩病にちがひない。
+
+  e.g. candidate generated: これも随分たよりないことだ。
+       {"acceptedCandidates": 0, "certifiedCandidates": 0, "constructionsComplete": true, "constructionsSelected": 1, "constructionsTotal": 1, "eligibleCandidates": 0, "framesComplete": true, "framesResolved": 1, "framesTotal": 1, "morphologyComplete": true, "opaqueTokens": 0, "openPositions": 1, "predicatesComplete": true, "predicatesResolved": 1, "predicatesTotal": 1, "rawCandidates": 2, "rejectedByGate": 0, "selected": 0, "tokens": 7, "verified": 0}
+
