@@ -112,8 +112,21 @@ var jaTableB = []entry{
 	// verb — 勉強する, 到着する — is still unknown, and reporting that is
 	// correct; claiming coverage here would not be.
 	{Base: "する", Spec: "CHANGE.02:0.42 CHANGE.06:0.34 EXIST.01:0.12"},
+	// 為る is SudachiDict's lemma for する, and the lookup tries the lemma
+	// before the surface — so listing する alone never matched under the
+	// backend that reports lemmas. The previous commit listed surface forms
+	// only, and would have looked like a closed gap that had changed nothing.
+	{Base: "為る", Spec: "CHANGE.02:0.42 CHANGE.06:0.34 EXIST.01:0.12"},
+	{Base: "為た", Spec: "CHANGE.02:0.42 CHANGE.06:0.34 EXIST.01:0.12"},
+	{Base: "為ている", Spec: "CHANGE.02:0.40 CHANGE.06:0.32 EXIST.01:0.12"},
 	{Base: "した", Spec: "CHANGE.02:0.42 CHANGE.06:0.34 EXIST.01:0.12"},
 	{Base: "してる", Spec: "CHANGE.02:0.40 CHANGE.06:0.32 EXIST.01:0.12"},
+	// 来る is the second most basic verb in the language and was missing. Its
+	// direction is contrastive — that is the whole difference between 来る and
+	// 行く — so it cannot be folded into a generic motion sense.
+	{Base: "来る", Spec: "MOVE.02:0.88 MOVE.14:0.06"},
+	{Base: "来た", Spec: "MOVE.02:0.82 MOVE.14:0.08"},
+	{Base: "きて", Spec: "MOVE.02:0.82 MOVE.14:0.08"},
 	{Base: "思う", Spec: "MENTAL.01:0.66 MENTAL.03:0.20 MENTAL.07:0.10"},
 	{Base: "考える", Spec: "MENTAL.01:0.56 MENTAL.13:0.26 MENTAL.09:0.14"},
 	{Base: "知る", Spec: "MENTAL.02:0.90"},
@@ -171,6 +184,14 @@ var jaTableC = []entry{
 	// UNKNOWN.VERB with a perfectly good morphological analysis behind it.
 	{Base: "です", Spec: "COPULA.03:0.92"},
 	{Base: "ですね", Spec: "COPULA.03:0.92"},
+	// The plain copula and the written formal one. です/でした were here and
+	// these were not, which is backwards: だ is the more frequent of the two and
+	// it is what most of written and spoken Japanese uses. Every 「〜である」
+	// and 「〜だ」 sentence was reported as an auxiliary head with no
+	// predicate.
+	{Base: "だ", Spec: "COPULA.01:0.92"},
+	{Base: "である", Spec: "COPULA.04:0.94"},
+	{Base: "であった", Spec: "COPULA.04:0.70 COPULA.02:0.24"},
 	{Base: "ですが", Spec: "COPULA.03:0.80 COPULA.05:0.14"},
 	{Base: "でした", Spec: "COPULA.02:0.92"},
 	{Base: "では", Spec: "COPULA.03:0.70"},

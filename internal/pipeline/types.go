@@ -248,6 +248,20 @@ type PredicateGap struct {
 	// which separates "the analyser could not see it" from "we have never
 	// written it down".
 	MorphUnknown bool `json:"morphUnknown,omitempty"`
+	// Backend names the morphological analyser that produced the head. A gap
+	// that only appears under one backend is that backend's coverage, not a
+	// missing predicate, and the two send whoever reads this to different
+	// tables.
+	Backend string `json:"backend,omitempty"`
+	// Tier is how the parser classified the clause the head belongs to:
+	// sentence_matrix | subordinate | fragment | auxiliary_chain |
+	// coordinate | no_clause. Without it, a head the parser attached at the
+	// wrong level is indistinguishable from a word nobody has written down.
+	Tier string `json:"tier,omitempty"`
+	// Conjoin names the relation to the preceding clause for a subordinate
+	// head, which is what says whether it should have had its own argument
+	// structure at all.
+	Conjoin string `json:"conjoin,omitempty"`
 	// Note carries the parser's own explanation when it gave one.
 	Note string `json:"note,omitempty"`
 }

@@ -142,6 +142,17 @@ def main():
             print(f"    {n:3}  {why}")
     if gaps:
         print("\n  unresolved clause heads")
+        # The three axes that decide who has to fix it. A gap that only appears
+        # under one backend is that analyser's coverage; a gap whose head sits
+        # on a fragment or a subordinate clause is the parser's; only the rest
+        # is vocabulary nobody has written down yet.
+        for key in ("tier", "backend", "pos"):
+            counts = {}
+            for g in gaps:
+                k = g.get(key) or "(none)"
+                counts[k] = counts.get(k, 0) + 1
+            summary = ", ".join(f"{k}={v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1]))
+            print(f"    by {key}: {summary}")
         by_cause = {}
         for gap in gaps:
             key = gap.get("cause", "?")

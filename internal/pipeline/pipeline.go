@@ -375,7 +375,7 @@ func (e *Engine) Translate(ctx context.Context, req Request) (*Response, error) 
 	//
 	// Computed here, by the code that did the work, and cumulative: a stage
 	// only counts when every earlier stage counted for the same sentence.
-	resp.Metrics = stageMetrics(mf, bundle, srcGraph, projection, raw, candidates)
+	resp.Metrics = stageMetrics(mf, bundle, srcGraph, projection, raw, candidates, morphBackends(mf))
 
 	// ---- 17. FINAL OUTPUT -------------------------------------------------
 	rec.Do(trace.StageOutput, "final output", func(s *trace.Span) error {
@@ -1082,6 +1082,25 @@ func dedupe(in []string) []string {
 // sentence with three clauses where two resolve has not resolved its predicates.
 // The fallback construction is excluded because it carries no verb, so counting
 // it would report a construction for every sentence that got this far.
+// morphBackends names the analysers that actually contributed a path, joined so
+// that a sentence analysed by more than one reports all of them.
+func morphBackends(mf *forest.MorphForest) string {
+	if mf == nil {
+		return ""
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range mf.Paths {
+		if p.Rule == "" || seen[p.Rule] {
+			continue
+		}
+		seen[p.Rule] = true
+		out = append(out, p.Rule)
+	}
+	sort.Strings(out)
+	return strings.Join(out, "+")
+}
+
 func stageMetrics(
 	mf *forest.MorphForest,
 	bundle *syntax.Bundle,
@@ -1089,6 +1108,7 @@ func stageMetrics(
 	projection *plan.Projection,
 	raw []forest.Candidate,
 	accepted []Candidate,
+	backend string,
 ) StageMetrics {
 	var m StageMetrics
 
@@ -1109,7 +1129,7 @@ func stageMetrics(
 			m.PredicatesResolved++
 			continue
 		}
-		if gap := predicateGap(e, g, bundle); gap != nil {
+		if gap := predicateGap(e, g, bundle, backend); gap != nil {
 			m.PredicateGaps = append(m.PredicateGaps, *gap)
 		}
 	}
@@ -1171,13 +1191,14 @@ func stageMetrics(
 // ontology entry, a clause head the parser picked wrongly, and an auxiliary or
 // copula read as a predicate. Only the first is fixed by writing a dictionary,
 // and a system that cannot tell them apart will keep editing the wrong table.
-func predicateGap(e *jlir.Event, g *jlir.Graph, bundle *syntax.Bundle) *PredicateGap {
+func predicateGap(e *jlir.Event, g *jlir.Graph, bundle *syntax.Bundle, backend string) *PredicateGap {
 	if e == nil || !strings.HasPrefix(e.Predicate, "UNKNOWN") {
 		return nil
 	}
 	gap := &PredicateGap{
 		Sentence: g.Source,
 		Surface:  strings.TrimSpace(g.Source),
+		Backend:  backend,
 		Note:     firstProvNote(e, "predicate is not in the lexicon"),
 	}
 	for _, p := range e.Prov {
@@ -1188,8 +1209,10 @@ func predicateGap(e *jlir.Event, g *jlir.Graph, bundle *syntax.Bundle) *Predicat
 	gap.Cause = "unknown_lexeme"
 	// The clause that produced the event is the authority on what its head was.
 	// The provenance token is the clause span, which is too coarse to act on.
-	if head, lemma, pos, span, unknown, note, cause := clauseHead(bundle, e, g); cause != "" {
+	if head, lemma, pos, span, unknown, note, cause, tier, conjoin := clauseHead(bundle, e, g); cause != "" {
 		gap.Cause = cause
+		gap.Tier = tier
+		gap.Conjoin = conjoin
 		gap.Lemma = lemma
 		gap.POS = pos
 		gap.SurfaceAll = span
@@ -1222,7 +1245,7 @@ func predicateGap(e *jlir.Event, g *jlir.Graph, bundle *syntax.Bundle) *Predicat
 // clauseHead returns the surface the parser chose as the predicate for an
 // event, with the morpheme facts needed to decide whether the gap is a missing
 // lexeme or a wrong head.
-func clauseHead(bundle *syntax.Bundle, e *jlir.Event, g *jlir.Graph) (head, lemma, pos, span string, unknown bool, note string, cause string) {
+func clauseHead(bundle *syntax.Bundle, e *jlir.Event, g *jlir.Graph) (head, lemma, pos, span string, unknown bool, note string, cause, tier, conjoin string) {
 	if bundle == nil {
 		return
 	}
@@ -1230,6 +1253,7 @@ func clauseHead(bundle *syntax.Bundle, e *jlir.Event, g *jlir.Graph) (head, lemm
 		if !clauseHasUnknown(c, g, e) {
 			continue
 		}
+		tier, conjoin = clauseTier(c, g)
 		if c.Matrix == "" {
 			// No overt predicate at all. That is a segmentation result, not a
 			// missing dictionary entry, and reporting it as one sends whoever
@@ -1241,12 +1265,12 @@ func clauseHead(bundle *syntax.Bundle, e *jlir.Event, g *jlir.Graph) (head, lemm
 					note = n
 				}
 			}
-			return "", "", "", span, true, note, "no_clause_head"
+			return "", "", "", span, true, note, "no_clause_head", tier, conjoin
 		}
 		m := bundle.Morph(c.Matrix)
 		if m == nil {
 			note = "the clause head does not resolve to a morpheme"
-			return "", "", "", span, true, note, "no_clause_head"
+			return "", "", "", span, true, note, "no_clause_head", tier, conjoin
 		}
 		head = m.Surface
 		lemma = m.Lem
@@ -1267,7 +1291,7 @@ func clauseHead(bundle *syntax.Bundle, e *jlir.Event, g *jlir.Graph) (head, lemm
 			unknown = true
 		}
 		span = head + strings.Join(parts, "")
-		return head, lemma, pos, span, unknown, note, "unknown_lexeme"
+		return head, lemma, pos, span, unknown, note, "unknown_lexeme", tier, conjoin
 	}
 	return
 }
@@ -1289,6 +1313,35 @@ func clauseText(bundle *syntax.Bundle, c *syntax.Clause) string {
 		}
 	}
 	return strings.Join(parts, "")
+}
+
+// clauseTier classifies the parser's attachment for the clause whose head is
+// unresolved.
+//
+// This is the axis that separates "nobody has written this word down" from "the
+// parser attached the wrong word". A head on a subordinate clause that has no
+// overt subject is not a vocabulary gap; neither is a head the parser picked as
+// the matrix of a fragment. Counting them together sends whoever reads the
+// number to the lexicon when the parser is what needs attention.
+func clauseTier(c *syntax.Clause, g *jlir.Graph) (tier, conjoin string) {
+	if c == nil {
+		return "no_clause", ""
+	}
+	conjoin = string(c.Conjoin)
+	switch {
+	case c.Matrix == "":
+		tier = "fragment"
+	case c.Conjoin != "":
+		tier = "subordinate"
+	case len(c.Notes) == 0 && c.Subject == nil && c.Topic == nil && c.Object == nil &&
+		len(c.Indirect) == 0 && g != nil && c.Span.Start == 0 && c.Span.End == len(g.Source):
+		tier = "sentence_matrix"
+	case c.Subject == nil && c.Topic == nil && c.Object == nil && len(c.Indirect) == 0:
+		tier = "auxiliary_chain"
+	default:
+		tier = "sentence_matrix"
+	}
+	return tier, conjoin
 }
 
 func clauseHasUnknown(c *syntax.Clause, g *jlir.Graph, e *jlir.Event) bool {
