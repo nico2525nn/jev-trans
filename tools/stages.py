@@ -31,6 +31,7 @@ actually did, cumulatively, and this script only sums it.
   candidate generated     the realizer produced something
   verification passed     the semantic hard gate accepted it
 """
+import argparse
 import json
 import subprocess
 import sys
@@ -78,14 +79,23 @@ def measure(sentence):
 
 
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else "corpus/sentences.json"
-    limit = None
-    show = 5
-    args = sys.argv[2:]
-    if "--limit" in args:
-        limit = int(args[args.index("--limit") + 1])
-    if "--show" in args:
-        show = int(args[args.index("--show") + 1])
+    # argparse rather than index arithmetic into sys.argv: the docstring
+    # documents --limit and --show, and a reader who types --help got a
+    # FileNotFoundError naming the flag as a file. A tool whose documented
+    # interface cannot be discovered is a tool whose documentation is ignored.
+    ap = argparse.ArgumentParser(
+        description="Stage-by-stage measurement of JEV-Trans on a sentence corpus.",
+        epilog="The binary is rebuilt automatically; metrics are read from "
+               "stageMetrics, never re-derived here.",
+    )
+    ap.add_argument("path", nargs="?", default="corpus/sentences.json",
+                    help="JSON file holding a list of source sentences")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="measure only the first N sentences")
+    ap.add_argument("--show", type=int, default=5,
+                    help="how many example sentences to print per stage (0 for none)")
+    args = ap.parse_args()
+    path, limit, show = args.path, args.limit, args.show
 
     sentences = json.load(open(path, encoding="utf-8"))
     if limit:
