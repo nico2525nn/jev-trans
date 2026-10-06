@@ -1436,7 +1436,31 @@ func entityOvert(e *jlir.Entity, l lang.Lang) bool {
 	if e == nil || isZeroEntity(e) {
 		return false
 	}
-	return strings.TrimSpace(e.Alias(l)) != ""
+	if v := strings.TrimSpace(e.Alias(l)); v != "" {
+		// An indefinite pronoun names no referent, so the target did not make
+		// one explicit. 「本を読んだ」 has a zero subject with an open referent
+		// distribution; English cannot drop the subject and the faithful
+		// rendering is "someone read a book", which selects nothing from the
+		// distribution. Treating it as an explicit referent rejected the correct
+		// translation for every Japanese sentence that drops its subject.
+		//
+		// The set is closed and English-only because the exemption is about what
+		// these words denote: "someone" is the paradigm case of a form that
+		// denotes without picking.
+		if l == lang.EN && enIndefinitePronouns[strings.ToLower(v)] {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// enIndefinitePronouns are the English pronouns that assert the existence of a
+// referent without selecting one.
+var enIndefinitePronouns = map[string]bool{
+	"someone": true, "somebody": true, "anyone": true, "anybody": true,
+	"something": true, "anything": true, "everyone": true, "everybody": true,
+	"everything": true, "nobody": true, "none": true,
 }
 
 // isZeroEntity reports whether e has no surface realization at all.

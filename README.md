@@ -290,6 +290,29 @@ LexicalProvider を入れたのはこの分類がそのまま手を打つ先を�
 `JEV_LEXICON_TSV` に外部辞書を与えることで、core を変えずにカバレッジを
 広げられます。この環境には外部辞書が無いので、まだその数は動いていません。
 
+### 2 つの morphological backend は別物
+
+`--morph builtin` と `--morph auto`（Sudachi）は同じ結果ではありません。
+全表は [`tools/baselines/session-diff.md`](tools/baselines/session-diff.md) に
+ありますが、要約はこうです。
+
+```
+                          builtin   auto(Sudachi)
+morphology fully resolved        3              68
+predicate  fully resolved       38              31
+semantic frame fully resolved   36              28
+unresolved clause heads         40              61
+```
+
+builtin は**前 1946 年の綴り**（`云ふ` など）を明示的に持っているので、述語と
+フレームは Sudachi よりよく解けました。一方、辞書に無い表層はすべて unknown
+token になるので morphology は大きく劣ります。
+
+どちらが一貫して良いわけでもありません。だからこそ両方を測るのであり、
+テストも `forEachBackend` で**環境変数ではなく engine の morphological registry**
+を切り替えます（環境変数はコマンドラインが engine を作る時にしか効かず、
+既に作られた engine の挙動は変わりません）。
+
 分類を出すのは `tools/stages.py` で、種別・parser の添付階層・backend・品詞の
 4 軸です。この 4 軸が無ければ 61 件は「全部辞書不足」としか読めず、辞書と
 構文解析と形態素解析のどこを直すべきかは分かりません。実際に、この分類を

@@ -444,3 +444,62 @@ func mustTranslate(t *testing.T, e *pipeline.Engine, src string) *pipeline.Respo
 	}
 	return resp
 }
+
+// An omitted Japanese subject whose referent stays open is realized as the
+// English indefinite pronoun. This is the most common Japanese-to-English
+// pattern there is — Japanese drops the subject of an ordinary sentence and
+// English cannot — and it produced nothing at all: the realizer refused to
+// invent a subject, so 「本を読んだ。」 had no candidate.
+//
+// Three things had to agree before it could.
+//
+// The target projection now realizes an undecided zero anaphor as the English
+// indefinite. "someone" says there is an agent without saying which, which is
+// what the source asserted; "they" would have put a person in a slot the source
+// left open and claimed a number it never licensed.
+//
+// NPPlan.Omitted treated any zero anaphor as omitted in the target, so the
+// choice was made and then deleted on the way to the surface.
+//
+// And the source records that an undecided zero subject is existentially
+// quantified. English spells it, the re-parse sees a SOME scope node the
+// Japanese source did not have, and the verifier compares scope operators by
+// count — so the faithful English was rejected for carrying an operator the
+// source was missing rather than wrong. The anaphor is only quantified when
+// the referent is still open: one the discourse layer resolved to Taro is Taro,
+// and quantifying that would be a different proposition.
+func TestOmittedSubjectBecomesAnIndefiniteInEnglish(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, backend string) {
+		resp := mustTranslate(t, backendEngine(t, backend), "本を読んだ。")
+		if resp.Result.Selected == nil {
+			t.Fatalf("%s: an omitted subject must still produce a candidate", backend)
+		}
+		if got := resp.Result.Selected.Text; got != "someone read a book." {
+			t.Errorf("%s: %q, want %q", backend, got, "someone read a book.")
+		}
+	})
+}
+
+// An anaphor the source supplied must not be turned into an indefinite. The
+// exemption in the verifier is about English words that denote without picking;
+// it must not extend to a form that does pick.
+func TestResolvedSubjectKeepsItsReferent(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, backend string) {
+		resp := mustTranslate(t, backendEngine(t, backend), "太郎が本を読んだ。")
+		if resp.Result.Selected == nil {
+			t.Fatalf("%s: no candidate", backend)
+		}
+		got := resp.Result.Selected.Text
+		if strings.Contains(got, "someone") || strings.Contains(got, "Someones") {
+			t.Errorf("%s: an overt subject was replaced by an indefinite: %q", backend, got)
+		}
+	})
+}
+
+func backendEngine(t *testing.T, backend string) *pipeline.Engine {
+	t.Helper()
+	if backend == "sudachi" {
+		return engine(t)
+	}
+	return builtinEngine(t)
+}

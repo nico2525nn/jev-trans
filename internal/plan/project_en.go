@@ -293,7 +293,19 @@ func enNPPlan(r Request, p *Projection, gp genderPolicy, ev *jlir.Event, role st
 	if np.Noun == "" && np.Pronoun == "" {
 		// Without a noun the only licensed realization is a pronoun; if even
 		// that is unavailable the phrase stays empty and the loss is recorded.
-		if opts := gp.pronouns(e); len(opts) > 0 {
+		//
+		// A zero anaphor whose referent the source left undecided is the case
+		// that matters most here, because it is the common one: Japanese omits
+		// the subject of an ordinary sentence and English cannot. "someone" says
+		// there is an agent without saying which, which is exactly what the
+		// source asserted — the referent distribution is a distribution, not a
+		// missing value. Choosing "they" instead would put a person in a slot
+		// the source left open and claim a number the source never licensed.
+		if p := zeroAnaphorPronoun(e); p != "" {
+			np.Pronoun = p
+			np.Note("realized as the English indefinite pronoun: the source left the " +
+				"referent undecided, and this names no particular referent")
+		} else if opts := gp.pronouns(e); len(opts) > 0 {
 			np.PronounOpts = opts[:1]
 		} else {
 			np.Note("referent has neither a target noun nor a licensed pronoun")
@@ -509,6 +521,44 @@ func enOmittable(g *jlir.Graph, ev *jlir.Event, role string, id jlir.ID) bool {
 // enImpliedSubject reports whether the discourse makes a subject recoverable
 // even though the event does not bind one, which is the difference between a
 // licensed drop and an invented referent.
+// zeroAnaphorPronoun returns the English indefinite pronoun that realizes a
+// zero anaphor the source left undecided, or "" when the anaphor is not that.
+//
+// The condition is deliberately narrow: the entity must be a zero anaphor AND
+// its referent distribution must still be open. An anaphor the discourse layer
+// already resolved to Taro is Taro, not someone, and rendering it as "someone"
+// would discard information the analysis did the work to recover.
+func zeroAnaphorPronoun(e *jlir.Entity) string {
+	if e == nil || !e.Zero || e.Referent == nil {
+		return ""
+	}
+	if len(e.Referent.Options) < 2 {
+		return ""
+	}
+	if e.Referent.Resolved {
+		return ""
+	}
+	open := false
+	for _, o := range e.Referent.Options {
+		if o == "UNKNOWN" {
+			open = true
+		}
+	}
+	if !open {
+		return ""
+	}
+	switch e.Type {
+	case jlir.TypeHuman, jlir.TypePerson, jlir.TypeAnimal:
+		return "someone"
+	case jlir.TypeArtifact, jlir.TypeFood, jlir.TypeAbstract, jlir.TypeEventLike:
+		return "something"
+	}
+	// An undecided zero anaphor of unknown animacy is still a person in most
+	// Japanese sentences, and "something" for a subject reads as a thing. A
+	// generic "someone" is the least committal English subject that exists.
+	return "someone"
+}
+
 func enImpliedSubject(g *jlir.Graph, ev *jlir.Event) bool {
 	if g == nil {
 		return false

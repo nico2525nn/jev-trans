@@ -1064,6 +1064,38 @@ func (a *analyzer) zeroSubject(c *syntax.Clause, sense *ontology.Sense, ev *jlir
 	a.jb.G.SourceFeat.Constructions = append(a.jb.G.SourceFeat.Constructions, "JP.ZERO_SUBJECT")
 	a.note(c, "subject unexpressed; created zero anaphor %s for %s over %d candidate referents",
 		z.ID, role, len(z.Referent.Options))
+	a.quantifyZeroAnaphor(c, ev, z, prov)
+}
+
+// quantifyZeroAnaphor records that an undecided zero subject is existentially
+// quantified over the event.
+//
+// 「本を読んだ」 says there is an agent and does not say which. That is
+// existential quantification, and English spells it — "someone read a book"
+// carries a SOME scope node the re-parse sees and the Japanese source does not.
+// The verifier compares scope operators by count, so without this every
+// Japanese sentence that drops its subject was rejected against the faithful
+// English for carrying an operator the source was missing rather than wrong.
+//
+// The node is only added when the referent is still undecided. An anaphor the
+// discourse layer resolved to Taro is Taro, and quantifying that would be a
+// different proposition.
+func (a *analyzer) quantifyZeroAnaphor(c *syntax.Clause, ev *jlir.Event, z *jlir.Entity, prov []jlir.Provenance) {
+	if z.Referent == nil || z.Referent.Resolved || len(z.Referent.Options) < 2 {
+		return
+	}
+	open := false
+	for _, o := range z.Referent.Options {
+		if o == unknownReferent {
+			open = true
+		}
+	}
+	if !open {
+		return
+	}
+	a.newScope(jlir.ScopeSome, []string{string(ev.ID)}, prov[0])
+	a.note(c, "the zero subject is existentially quantified: an agent is asserted and its "+
+		"identity is left open, which is what %s records", jlir.ScopeSome)
 }
 
 // isSurfacePlusMarker reports whether longer is just surface followed by a case

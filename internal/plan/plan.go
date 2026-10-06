@@ -364,7 +364,24 @@ func (n *NPPlan) Head() string {
 }
 
 // Omitted reports whether the phrase is realized as pure absence.
-func (n *NPPlan) Omitted() bool { return n == nil || n.IsZero || n.Omit }
+// Omitted reports whether the target leaves this phrase out.
+//
+// A zero anaphor the source omitted is not automatically omitted in the target.
+// Japanese drops the subject of an ordinary sentence and English cannot; where
+// the target projection has chosen a realization for the anaphor — the English
+// indefinite pronoun, say — that choice is the whole point, and treating it as
+// still omitted deleted it again on the way to the surface. When the target has
+// chosen nothing, the anaphor stays omitted, which is the right answer for a
+// target language that also drops it.
+func (n *NPPlan) Omitted() bool {
+	if n == nil || n.Omit {
+		return true
+	}
+	if !n.IsZero {
+		return false
+	}
+	return n.Noun == "" && n.Pronoun == "" && n.Clause == nil
+}
 
 // --- entry points --------------------------------------------------------
 

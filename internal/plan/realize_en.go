@@ -1041,7 +1041,7 @@ var enNounPlural = map[string]string{
 	"nobody": "nobody", "none": "none",
 	"something": "something", "anything": "anything", "everything": "everything",
 	"nothing": "nothing",
-	"each": "each", "either": "either", "neither": "neither",
+	"each":    "each", "either": "either", "neither": "neither",
 	"one": "one", "another": "another",
 }
 
