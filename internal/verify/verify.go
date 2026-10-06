@@ -1211,11 +1211,11 @@ func (v *verifier) comparePragmatics() {
 			DimPragmatic, min1(d*0.2), DiffPragmatics, DiffRegister)
 	}
 	// styleUnknown is the pragmatics layer's "the morphology decided nothing". It
-// is a sentinel, not a register, and the comparison below must not treat it as
-// one.
-const styleUnknown = "unknown"
+	// is a sentinel, not a register, and the comparison below must not treat it as
+	// one.
+	const styleUnknown = "unknown"
 
-// "unknown" is the pragmatics layer's way of saying the morphology decided
+	// "unknown" is the pragmatics layer's way of saying the morphology decided
 	// nothing, not a register the sentence is in. Comparing a determined source
 	// style against it produced "speech style changed from plain to unknown"
 	// and charged a loss for the checker admitting it knew nothing. The target
