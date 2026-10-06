@@ -1025,9 +1025,20 @@ func (a *analyzer) zeroSubject(c *syntax.Clause, sense *ontology.Sense, ev *jlir
 		return
 	}
 	role := ""
-	for _, want := range subjectRoles {
-		if sense.Accepts(want) {
-			role = want
+	// A required role first. COPULA.01 requires a theme and merely accepts an
+	// experiencer, and subjectRoles lists experiencer before theme, so the zero
+	// anaphor went into the optional slot and the sentence was then reported
+	// as missing the theme it had just been offered. The zero argument exists to
+	// fill a slot the frame needs; filling an optional one and leaving the
+	// required one empty is the opposite of what it is for.
+	for _, required := range []bool{true, false} {
+		for _, want := range subjectRoles {
+			if sense.Accepts(want) && sense.Requires(want) == required {
+				role = want
+				break
+			}
+		}
+		if role != "" {
 			break
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nico/jev-trans/internal/jlir"
 	"github.com/nico/jev-trans/internal/lang"
 	"github.com/nico/jev-trans/internal/lex"
 	"github.com/nico/jev-trans/internal/syntax"
@@ -101,4 +102,24 @@ func clausesOf(t *testing.T, src string) []*syntax.Clause {
 		return nil
 	}
 	return b.Clauses
+}
+
+// A zero argument exists to fill a slot the frame cannot do without. COPULA.01
+// requires a theme and merely accepts an experiencer, and the preference order
+// lists experiencer first, so 「さうだ。」 put its zero anaphor in the optional
+// slot and was then reported as missing the theme it had just been offered.
+func TestZeroArgumentPrefersARequiredRole(t *testing.T) {
+	resp := translate(t, "さうだ。", lang.JA, lang.EN, "full")
+	for _, l := range resp.Metrics.FrameLosses {
+		if strings.HasPrefix(l, "missing_role:") {
+			t.Fatalf("the zero argument went into an optional slot: %s", l)
+		}
+	}
+	evs := resp.JLIR.Source.Events
+	if len(evs) == 0 {
+		t.Fatal("no event")
+	}
+	if _, ok := evs[0].Args[jlir.RoleTheme]; !ok {
+		t.Fatalf("the required role must be the one filled, got %v", evs[0].Args)
+	}
 }

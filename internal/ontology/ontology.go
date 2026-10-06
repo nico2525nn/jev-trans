@@ -72,6 +72,19 @@ func (s *Sense) Accepts(role string) bool {
 	return false
 }
 
+// Requires reports whether a role is mandatory for this sense. It is distinct
+// from Accepts: a zero argument must fill a slot the frame cannot do without,
+// and choosing among the two by preference order alone puts it in the wrong one
+// whenever an optional role happens to be listed first.
+func (s *Sense) Requires(role string) bool {
+	for _, a := range s.Args {
+		if a.Role == role {
+			return a.Required
+		}
+	}
+	return false
+}
+
 // RequiredArgs returns the mandatory roles.
 func (s *Sense) RequiredArgs() []string {
 	var out []string
