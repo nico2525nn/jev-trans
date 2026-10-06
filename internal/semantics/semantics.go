@@ -897,7 +897,14 @@ func (a *analyzer) arguments(c *syntax.Clause, sense *ontology.Sense, ev *jlir.E
 	// Japanese drops the subject. When the predicate needs one, the missing
 	// argument is a zero anaphor with a real referent distribution (plan.md §15),
 	// never a silently absent role.
-	if ja && c.Subject == nil && c.Topic == nil {
+	//
+	// The test has to be `nil or Zero`, not `nil`. The parser does not leave an
+	// omitted subject as an absent field: it plans an explicit zero phrase so
+	// that the omission is visible in the trace, and this analyzer used to test
+	// for absence only. The two layers therefore disagreed about what an
+	// omitted subject looks like, and every sentence whose subject Japanese
+	// dropped finished with an event that had no arguments at all.
+	if ja && (c.Subject == nil || c.Subject.Zero) {
 		a.zeroSubject(c, sense, ev)
 	}
 }

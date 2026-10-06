@@ -408,3 +408,24 @@ func TestScopeRepresentationsAgree(t *testing.T) {
 	}
 	_ = resp
 }
+
+// Japanese drops the subject, and the parser plans an explicit zero phrase for
+// it rather than leaving the field absent. An analyzer that tests for absence
+// only therefore sees no omitted subject at all, and every such sentence ends
+// with an event that has no arguments — which reads as an argument-binding bug
+// three stages away from the disagreement that caused it.
+//
+// The assertion is about the zero anaphor existing as a first-class argument
+// with an undecided referent, not about a specific antecedent: plan.md §17 is
+// explicit that ambiguity should survive when nothing forces it away.
+func TestZeroSubjectBecomesAnArgument(t *testing.T) {
+	resp := translate(t, "本を読んだ。", lang.JA, lang.EN, "full")
+	if len(resp.Metrics.PredicateGaps) != 0 {
+		t.Fatalf("the predicate must resolve: %+v", resp.Metrics.PredicateGaps)
+	}
+	for _, l := range resp.Metrics.FrameLosses {
+		if l == "no_arguments_bound" {
+			t.Fatal("an omitted Japanese subject must not leave the event argument-less")
+		}
+	}
+}
