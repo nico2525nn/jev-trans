@@ -348,10 +348,30 @@ func enIsVerbReading(rs []enReading) bool {
 
 // enTenseAmbiguousIrregulars are verbs whose base, past and participle are all
 // spelled the same, so the written form carries no tense at all.
-var enTenseAmbiguousIrregulars = map[string]bool{
-	"read": true, "set": true, "put": true, "cut": true, "let": true,
-	"shut": true, "spread": true, "spend": true, "burst": true,
-}
+//
+// It is derived from the paradigm table rather than written out beside it. The
+// two disagreed: spend was listed here while the paradigm table spells its past
+// "spent", so a reader of either table in isolation would conclude something
+// false — and the direction the error ran was the dangerous one, because an
+// ambiguous token is one the analyser refuses to settle.
+//
+// Deriving the property that actually defines the set removes the possibility
+// of drift: a verb is here exactly when its past is spelled like its base.
+var enTenseAmbiguousIrregulars = func() map[string]bool {
+	m := make(map[string]bool, 16)
+	for base, v := range enIrregularVerbs {
+		// "was/were" names several forms and matches no single base; that verb
+		// is not spelled identically in the first place.
+		past, alt, multiple := strings.Cut(v.Past, "/")
+		if multiple || alt != "" || past == "" {
+			continue
+		}
+		if past == base {
+			m[base] = true
+		}
+	}
+	return m
+}()
 
 func enTenseAmbiguousIrregular(l string) bool { return enTenseAmbiguousIrregulars[l] }
 
@@ -371,6 +391,9 @@ func enReadingFromVerb(vf enVerbReading) enReading {
 	// English has verbs whose present and past are spelled identically: read,
 	// set, put, cut, let, shut, spread. The spelling alone settles nothing, so
 	// the token carries BOTH readings and lets the parse narrow them.
+	//
+	// The list is derived from enIrregularVerbs rather than restated, which is
+	// what keeps spend out of it.
 	//
 	// "Taro read a book" is past, because a third-person singular subject takes
 	// -s in the present and would have to be "reads". "I read a book" is not

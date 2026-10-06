@@ -432,10 +432,24 @@ var enVerbForm = map[string][]enVerbReading{}
 // enSelfInflected lists the verbs whose past and participle are spelled exactly
 // like the base form. They are the reason "read", "set" and "put" cannot be
 // lemmatized by suffix alone.
-var enSelfInflected = map[string]bool{
-	"read": true, "set": true, "put": true, "cut": true, "let": true,
-	"spread": true, "shoot": true, "cost": true, "hurt": true, "shut": true,
-}
+//
+// Derived from the paradigm table for the same reason as
+// enTenseAmbiguousIrregulars: the hand-written version listed shoot and cost,
+// whose pasts are "shot" and "costed", so a verb was being told it could not be
+// lemmatized by suffix when its own paradigm said the suffix was unambiguous.
+var enSelfInflected = func() map[string]bool {
+	m := make(map[string]bool, 16)
+	for base, v := range enIrregularVerbs {
+		past, alt, multiple := strings.Cut(v.Past, "/")
+		if multiple || alt != "" || past == "" {
+			continue
+		}
+		if past == base && v.PP == base {
+			m[base] = true
+		}
+	}
+	return m
+}()
 
 // enAlsoNoun lists verb forms that are also ordinary nouns, so the lattice
 // keeps the noun reading of "left", "saw", "cut", "set".
