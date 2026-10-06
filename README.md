@@ -245,213 +245,56 @@ internal/
 
 ### 達成目標と、そこからの距離
 
-このシステムの目標は、**青空文庫の小振りな作品1冊を通しで翻訳すること**です。
-手作りの例ではなく実際の文章で測らないと、実用になるかどうかを
-判断できないためです。
-
-現在計測しているコーパスは宮沢賢治「秋田街道」1,898字・88文です。
+現在（`tools/baselines/session-diff.md` に全表）:
 
 ```
-$ python3 tools/corpus.py ingest corpus/akita.txt
-$ python3 tools/corpus.py measure corpus/akita.txt --limit 88
-
-4/88 sentences translated (4%)
-
-   53  unresolved morpheme -> unknown predicate
-   30  no construction for predicate
-    1  predicate not in the lexicon
+                              4eae9af   current
+morphology fully resolved            68        68
+predicate  fully resolved             25   →    31
+semantic frame fully resolved          9   →    28
+unresolved clause heads               70   →    61
+raw candidates                       162   →   216
+eligible (gate passed)                 1   →     4
+certified (equivalence proved)         0        0
+selected                               1   →     4
 ```
 
-**つまり目標はまだ達成していません。** 88文のうち翻訳できたのは4文、率にして4%です。
-この数字を見やすく整えて書くことはしません。
-
-### 形態素解析バックエンド
-
-形態素解析は**交換可能な backend** に切り出してあります。core は標準ライブラリ
-のみで巨大な辞書を一切持ちません。
-
-```go
-type MorphAnalyzer interface {
-    Name() string
-    Version() string
-    Supports(p Profile) bool
-    Analyze(ctx context.Context, text string, p Profile) (*Analysis, error)
-}
-```
+引数が失われた理由（`tools/baselines/session-diff.md`）:
 
 ```
-jev-trans core
-      │  NDJSON（1行1要求・1行1応答）
-      ▼
-┌──────────────────┐
-│ morph backend    │
-├──────────────────┤
-│ builtin          │  自前の約800語。依存ゼロのフォールバック
-│ Sudachi          │  process/sudachi_backend.py → sudachipy
-│ UniDic / MeCab   │  process として同じ枠で追加できる
-└──────────────────┘
+no_arguments_bound                   49   →     0
+unknown_predicate:UNKNOWN.VERB        70   →    61
+missing_role:recipient                 1   →     4
+missing_role:comitative                3   →     4
+missing_role:theme                     2   →     3
+missing_role:experiencer               2   →     0
 ```
 
-**process 境界を選んだ理由** — Sudachi は Python 拡張、UniDic は通常 MeCab 経由で、
-辞書はどれも数百MB。Go の import に置けば core は依存フリーでも小さくもなくなり、
-さらにネイティブツールチェーンがビルドに必要になります。pipe の上であれば core は
-`os/exec` と JSON だけで足ります。**外部解析器の無い環境でも停止しません。**
+**`no_arguments_bound` 49 → 0 が実質的な変化です。** parser は日本語の省略主語を
+明示的な零 phrase として計画しますが、analyzer は「不在」しか見ていませんでした。
+両層的主語の形について認識が食い違い、その結果、日本が主語を落とした文は
+すべて引数のない event で終わっていました。引数 binder 自体には何も問題が
+ありませんでした — 渡ってきた節がすでに壊れていたのです。「引数が結べなかった」
+という報告が指していたのは binder ではなく、その上流の矛盾でした。+19 の
+frame 解決もここから出ています。
 
-設定別の lexicon：
+**`certified` は 0 のままです。** hard gate を通ることと等価性を証明することは
+別の主張で、このコーパスではまだ証明された候補が一つもありません。4 つの選択
+済み候補はいずれも LOSSY です。Verifier を緩めて数字を上げることは、ここでは
+やってはいけません。
 
-| profile | 担当 |
-|---|---|
-| `modern` / `modern-literary` | SudachiDict |
-| `old-kana-colloquial` | 国語研 旧仮名口語UniDic |
-| `auto` | テキストから判定して比較 |
+残りの内訳は `tools/stages.py` の `unresolved clause heads` に出ます。
+61 件中、50 件は語彙知識（`落ち` `ゆらい` `きらめき` — 宮沢賢治 1920 年代の
+語彙）、6 件は助動詞が句頭になったもの、5 件は述語のない断片です。
+LexicalProvider を入れたのはこの分類がそのまま手を打つ先を示すからです。
+`JEV_LEXICON_TSV` に外部辞書を与えることで、core を変えずにカバレッジを
+広げられます。この環境には外部辞書が無いので、まだその数は動いていません。
 
-バージョンは探索せず **pin して記録**します。ただし実際の SudachiPy の stable は
-**0.7.0** で、V1 SudachiDict を読みます（`0.8.2` は Java 版 Sudachi のリリースです）。
-どの backend が答えたかは span の `analyzer` ラベルに入ので、
-ビルトインに落ちた run とそうでない run は区別できます。
-
-```sh
-./jevtrans translate --morph auto --sudachi-dict core --morph-profile auto --text "..."
-./jevtrans translate --morph builtin --text "..."      # 外部を使わず強制
-```
-
-### 計測方法
-
-```sh
-python3 tools/corpus.py ingest corpus/akita.txt   # ルビ除去・文分割
-python3 tools/corpus.py measure corpus/akita.txt  # 文ごとに翻訳して失敗原因で集計
-python3 tools/baseline.py record > /tmp/b.json    # 回帰用スナップショット
-python3 tools/baseline.py compare /tmp/b.json
-```
-
-`measure` は失敗を原因ごとに束ねます。次の修正を「頻度で選ぶ」ためで、
-勘で直さないためです。段階別にどこで落ちているかを見るには `stages.py` を使います。
-
-```
-$ python3 tools/stages.py corpus/sentences.json
-
-  morphology resolved       88/88
-  predicate resolved        51/88   (-37)
-  semantic frame resolved   26/88   (-25)
-  construction available    49/88   (-23)
-  candidate generated        2/88   (-47)
-  verification passed        2/88
-
-  opaque span ratio      162/250 = 64.8%
-```
-
-行は累積です。ある段まで到達していれば、それ以前の段にも到達しています。だから
-2行の差がそのままその層の仕事量になります。
-
-### 実際に翻訳できるもの
-
-英語→日本語方向は動作しています。**日本語→英語方向は Sudachi 化で壊れています。**
-以下の表は現行バイナリで検証した結果のみです。
-
-| 入力 | 出力 | 状態 |
-|---|---|---|
-| Taro gave a book to Hanako. | 太郎は本を花子に渡しましたね。 | LOSSY |
-| She eats rice. | 彼女は米を食べますね。 | LOSSY |
-| He drank water. | 彼は水を飲みましたね。 | LOSSY |
-| 太郎が花子に本を渡した。 | （候補なし） | UNPARSABLE |
-| 私は行きます。 | （候補なし） | UNPARSABLE |
-| 彼女が来た。 | （候補なし） | UNPARSABLE |
-
-日本語→英語が壊れた理由は、regression の節で述べたとおりです。`--morph builtin` を
-付ければ builtin 解析器では従来どおり英語方向の例は動きます。
-
-**偽の保証は出ていません。** 解析できない述語は語彙化されず、候補は生成されず、
-`UNPARSABLE` として報告されます。プレースホルダー語（`unknowns.` など）は出力に
-一切現れません（`TestNoPlaceholderEverReachesTheOutput` で固定）。これは
-plan.md §22 の要求です。
-
-その他の固定されている性質:
-
-- 原文が支持しない性別が生成されることはない
-- スコープの曖昧性は解決されず、`皆が帰らなかった` は2読みを保持する
-- 検証器のハードゲートは候補数に関係なく必ず実行される
-- 形態素カバレッジは常に100%（未知語も1トークンとして保持）
-- `ー` を含む外来語（ビール、コーヒー、テーブル）が1形態素になる
-- 空白のみ・絵文字・句読点のみ・非言語混在で panic しない
-
-### コーパス測定で判明し、直したもの
-
-実文を測るまで分からなかった問題がありました。多くは **アーキテクチャではなく
-知識の欠落** でした。ただし Sudachi については逆で、adapter が呼んでいた API が
-`Dictionary() → .tokenizer()` ではなく `sudachipy.Tokenizer(...)` だったため起動の
-たびに落ちていました。そのエラーを辞書形式の非互換と誤診し `0.8.2` を pin して
-いましたが、`0.8.2` は Java 版 Sudachi のリリースであり SudachiPy には存在しません。
-実際の stable は **0.7.0** で、V1 辞書を読みます。
-
-| 問題 | 実測された症状 | 対処 |
-|---|---|---|
-| 旧仮名遣い | 宮沢は `ゐる` と書く。現行辞書には `いる` しか無い | 外部解析器が無い場合のフォールバックで `ゐ→い` `ゑ→え` `ふ→う` と反復記号を展開。書き換えはトレースに記録 |
-| 辞書の二重性 | 述語辞書241語と形態素辞書836語が別物。片方にしか無い動詞は分割不能で `住っていた` が `住っ/て/いた` に崩れた | 述語辞書が `lex.RegisterJapaneseVerb` を通じて解析器に動詞を供給。活用級は綴りから推定 |
-| い形容詞述語 | `この道は古い。` には動詞が無い。文が丸ごと死に、診断が空文字になった | COPULA 系で解決。register で sense を選ぶ |
-| 過剰に厳しい役割検査 | 時制・様式の付随語をフレームが持てないだけで文を却下 | 核心項の脱落は致命的のまま。付随語は許容 |
-| polite 形と copula | です/ます/ました/ましてが辞書に無く、COPULA.03/.05 に英語構築も無かった | 両方追加 |
-| Sudachi adapter の API | 起動ごとに `cannot create Tokenizer instances`、辞書を辞書非互換と誤診 | 正しいコンストラクタに修正。backend が実際に応答 |
-| adapter パス | 作業ディレクトリ基準で、`go test` では package 配下 → python が即死し、原因不明の stream 閉鎖 | 実行ファイルと作業ディレクトリの親を探索。stderr をエラーに添付 |
-| `translate` の backend 未登録 | `serve` のみ had it、CLI の計測は全て builtin を測っていた | セットアップを共有 |
-| backend の失敗理由 | trace には残るが返却値には無く、「設定されて失敗」と「未インストール」が同一に見えた | 理由を返却値にも載せる |
-| 文字 vs バイト offset | Sudachi は文字、core はバイト → 日本語の span がすべてズレ | adapter で変換 |
-
-Sudachi が応答するようになった後の効果：
-
-```
-                     builtin   Sudachi
-opaque span ratio     80.6%  →   64.8%
-predicate resolved     43    →    51
-construction avail.    39    →    49
-```
-
-**担当した層は予想どおり動きました。**
-
-### ただし regression がある
-
-```
-candidate generated      5    →     2
-```
-
-実在の regression です。Sudachi の細かい分割が copula 補助動詞・単独のい形容詞・
-複数トークン引数を下流に晒し、projection がまだ扱えていません。copula イベントは
-theme 付きで解決しますが subject が空のため、realizer が何も出しません。
-
-これは「述語知識が 37 件残っている」に加えて、**解析は良くなったが下流が追いついて
-いない**という別の層が露出したことを意味します。段階別指標がそれを正確に指すので、
-次はそこを直します。推測ではなく計測で次の場所が分かります。
-
-### まだ足りていないもの
-
-段階別指標の順に、次の層が順に減っています。
-
-1. **candidate generated の regression**（Sudachi 化で 5 → 2）。下流が Sudachi の
-   細かい分割に追いついていません。ここを先に直します。
-2. **述語知識が 51 件**。Sudachi が分割できた動詞でも、述語辞書にはまだ
-   無い動詞があります。ただし内訳は 1 つの原因ではありません。
-   `tools/stages.py` の `unresolved clause heads` が区別します。
-
-   ```
-   51  unknown_lexeme  (35 distinct heads)   語彙の問題
-    6  auxiliary       (2 distinct heads)    構文解析の問題
-    5  no_clause_head                         分割の結果
-   ```
-
-   35 heads の多くは宮沢賢治 1920 年代の語彙 — `落ち` `きらめき` `置きすて`
-   `浮ん` — で，手で追記してもこの作品のためだけになります。
-   そこで LexicalProvider を入れました。Supply 元は差し替え可能で、
-   `JEV_LEXICON_TSV` に TSV を渡すだけで core は触らずにカバレッジが広がります。
-   この環境には外部辞書が無いので、头上的数値はまだ変わっていません。
-3. **意味フレームが 25 件**。述語は分かったが、役割が埋まらない文。
-4. **英語構築が 13 件**。sense は取れても対象言語の構築が無い。
-5. **名詞の語彙**。`見草` `雲` `沢` など、この作品の地名が未収録で、
-   それらが主語・目的語になる文は生成できません。
-6. **命令・義務の枠**。`Taro should read a book.` は扱っていません。
-7. **量化詞**。`全員が帰らなかった` の `ALL` は失われます。
-8. **二節文**。ので/ば/けど などで連結された文は `UNPARSABLE` です。
-9. **判断モデルの実API未検証**。クライアントは `systemone` の仕様どおりに
-   実装され、prior へ劣化する経路は動作しますが、この環境には
-   `OPENCODE_API_KEY` がないため実APIへのリクエストは行っていません。
+分類を出すのは `tools/stages.py` で、種別・parser の添付階層・backend・品詞の
+4 軸です。この 4 軸が無ければ 61 件は「全部辞書不足」としか読めず、辞書と
+構文解析と形態素解析のどこを直すべきかは分かりません。実際に、この分類を
+作ったことで 代名詞の POS 欠落、copula 判定、主語 zéro句の不整合、そして
+〜くなる 構文の 4 件が見つかりました。
 
 ### 構造的な欠陥：劣化経路が無い
 
