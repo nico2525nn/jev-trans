@@ -187,6 +187,62 @@ func sourceSentenceFinals(resp *pipeline.Response) map[string]bool {
 	return out
 }
 
+// TestEnglishTenseAgreementNotFlag pins the resolution of read/set/put, whose
+// present and past are spelled identically.
+//
+// A per-token "this is ambiguous" flag cannot express the difference: "Taro read a
+// book" is settled, because a third-person singular subject takes -s in the
+// present and would have to read "reads". "I read a book" is not, because I read
+// is both. The flag treated them alike and made the first one unverifiable.
+func TestEnglishTenseAgreementNotFlag(t *testing.T) {
+	for _, tc := range []struct {
+		src  string
+		want string // "" means the reading must stay open
+	}{
+		// Singular third person: the present would take -s, so it is past.
+		{"Taro read a book.", jlir.TensePast},
+		{"She read a book.", jlir.TensePast},
+		// Plural and first/second person take no -s, so the present and the
+		// past are the same string and nothing settles it.
+		{"They read a book.", ""},
+		{"I read a book.", ""},
+		{"We read a book.", ""},
+	} {
+		t.Run(tc.src, func(t *testing.T) {
+			g := analyzeEnglish(t, tc.src)
+			if len(g.Events) == 0 {
+				t.Fatalf("no event for %q", tc.src)
+			}
+			ev := g.Events[0]
+			if tc.want == "" {
+				// The reading stays open, and says so with the readings rather
+				// than with a guess.
+				var has bool
+				for _, f := range ev.Features {
+					if f.Key == "tense_readings" {
+						has = true
+					}
+				}
+				if !has {
+					t.Errorf("%q: tense left empty without recording the open readings; "+
+						"an unknown tense must be visible, not silently dropped (features %v)",
+						tc.src, ev.Features)
+				}
+				return
+			}
+			if ev.Tense != tc.want {
+				t.Errorf("%q: tense = %q, want %q", tc.src, ev.Tense, tc.want)
+			}
+		})
+	}
+}
+
+func analyzeEnglish(t *testing.T, src string) *jlir.Graph {
+	t.Helper()
+	b := syntax.ParseEN(src, lex.AnalyzeEN(src))
+	return semantics.Build(b, lang.EN)
+}
+
 // sudachiAvailable reports whether the external analyser can answer here, so
 // the golden tests skip rather than fail in an environment without it.
 func sudachiAvailable() bool {

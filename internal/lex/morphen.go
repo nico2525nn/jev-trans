@@ -369,13 +369,17 @@ func enReadingFromVerb(vf enVerbReading) enReading {
 			"number", "sing", "lemma_kind", "irregular")
 	}
 	// English has verbs whose present and past are spelled identically: read,
-	// set, put, cut, let, shut, spread, spend. "Taro read a book" and "Taro
-	// reads a book" differ only in a sound the written form does not carry, so
-	// the string alone cannot settle the tense — and the verifier must not
-	// reject a correct sentence because of it. The token says so, and the
-	// verifier reads the flag instead of guessing from the spelling.
+	// set, put, cut, let, shut, spread. The spelling alone settles nothing, so
+	// the token carries BOTH readings and lets the parse narrow them.
+	//
+	// "Taro read a book" is past, because a third-person singular subject takes
+	// -s in the present and would have to be "reads". "I read a book" is not
+	// settled by agreement: I read is present and I read is past. A flag
+	// saying "ambiguous" cannot express that difference, so the readings
+	// themselves are recorded and the parser decides from the subject.
 	if enTenseAmbiguousIrregular(vf.Lemma) && f["tense"] != "past" {
-		f["tense_ambiguous"] = "true"
+		delete(f, "tense")
+		f["tense_readings"] = "present,past"
 	}
 	return enReading{POS: forest.POSVerb, Lem: vf.Lemma, Feats: f, Weight: 0.93, Rule: "irregular", Dict: true}
 }

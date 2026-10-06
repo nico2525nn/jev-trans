@@ -996,6 +996,9 @@ func enFillTense(c *Clause, w []*forest.Morph, vs, main, ve int) {
 	default:
 		if t := w[main].Feat("tense"); t != "" {
 			c.Tense = t
+		} else if readings := w[main].Feat("tense_readings"); readings != "" {
+			// The spelling carries both readings, so agreement decides.
+			c.Tense = enResolveTenseByAgreement(readings, c, w, vs)
 		} else if w[main].Feat("part") == "participle" {
 			c.Tense = "past"
 		}
@@ -1006,6 +1009,36 @@ func enFillTense(c *Clause, w []*forest.Morph, vs, main, ve int) {
 	if enIsCopula(w[main]) {
 		c.Tense = w[main].Feat("tense")
 	}
+}
+
+// enResolveTenseByAgreement narrows a verb whose present and past are spelled
+// identically using the subject.
+//
+// "Taro read a book" is past: a third-person singular subject takes -s in the
+// present, so the present would have to be "reads". "I read a book" is not
+// settled — I read is the present and I read is the past — and is left for the
+// semantic forest to hold open, which is where an unresolved reading belongs.
+func enResolveTenseByAgreement(readings string, c *Clause, w []*forest.Morph, vs int) string {
+	opts := strings.Split(readings, ",")
+	if len(opts) < 2 {
+		return opts[0]
+	}
+	// The subject is the first noun-ish token before the verb.
+	for k := 0; k < vs; k++ {
+		if !enIsNounish(w[k]) {
+			continue
+		}
+		switch strings.ToLower(w[k].Surface) {
+		case "i", "you", "we", "they":
+			// No agreement evidence either way: first and second person, and
+			// plural, keep the same -e ending. Leave it open.
+			return ""
+		default:
+			// Third person singular would need -s, which the reading lacks.
+			return "past"
+		}
+	}
+	return ""
 }
 
 // enFillVoice flags the passive. The active reading is kept as an alternative

@@ -663,17 +663,20 @@ func (a *analyzer) morphology(c *syntax.Clause, ev *jlir.Event) {
 		ev.Mood = c.Mood
 		ev.Prov = append(ev.Prov, prov(jlir.OriginMorphological, "mood %s", c.Mood)...)
 	}
-	// A verb whose spelling does not carry its tense travels with the event, so
-	// the verifier can tell "the target says it is present" apart from "the
-	// target cannot say". English writes read/read and set/set; rejecting on that
-	// rejects correct sentences, and accepting on it asserts what the evidence
-	// does not support.
-	if m != nil && m.Feat("tense_ambiguous") != "" {
-		ev.Features = append(ev.Features, jlir.Feature{
-			Key: "tense_ambiguous", Value: true, Confidence: 1,
-			Prov: prov(jlir.OriginMorphological,
-				"%s is spelled identically in the present and the past", m.Text(a.b.Source)),
-		})
+	// An unresolved tense is carried on the event as an open reading rather than as
+	// a flag saying "ambiguous". 「I read a book.」 is present-or-past and the
+	// evidence does not decide; saying so with a distribution leaves the choice
+	// where plan.md §13 wants it, in the scope graph the decision layer reads.
+	if m != nil && m.Feat("tense_readings") != "" && ev.Tense == jlir.TenseUnknown {
+		opts := strings.Split(m.Feat("tense_readings"), ",")
+		if len(opts) > 1 {
+			ev.Features = append(ev.Features, jlir.Feature{
+				Key: "tense_readings", Value: opts, Confidence: 0.4,
+				Prov: prov(jlir.OriginMorphological,
+					"%s is spelled identically in the present and the past; the subject did not settle it",
+					m.Text(a.b.Source)),
+			})
+		}
 	}
 	if c.Causation != "" {
 		ev.Causation = c.Causation

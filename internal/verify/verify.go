@@ -768,7 +768,7 @@ func tenseUnverifiable(t *jlir.Event) bool {
 		return false
 	}
 	for _, f := range t.Features {
-		if f.Key == "tense_ambiguous" {
+		if f.Key == "tense_readings" {
 			return true
 		}
 	}
