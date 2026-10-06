@@ -78,6 +78,16 @@ var posTags = map[string]POS{
 	"助詞-副助詞": POSParticle, "助詞-接続助詞": POSParticle, "助詞-終助詞": POSParticle,
 	"助動詞-助動詞-一般": POSAux, "助動詞-助動詞-過去": POSAux,
 	"接頭辞": POSAffix, "接尾辞": POSAffix, "記号": POSPunct, "空白": POSPunct,
+
+	// Pronouns. 誰 and 私 are 代名詞 in SudachiDict, and without this every
+	// pronoun-headed argument fell out of noun-phrase attachment: 「誰が云ふ。」 had
+	// no NP for が to bind to, so the event got zero arguments and the sentence
+	// died as no_arguments_bound. The tag was missing, not the analysis.
+	"代名詞": POSPronoun, "代名詞-一般": POSPronoun, "代名詞-普通名詞": POSPronoun,
+	"代名詞-人名": POSPronoun, "代名詞-地名": POSPronoun, "代名詞-指示詞": POSPronoun,
+
+	// Numeric and non-nominal first-level tags that appear in the JPOS grid.
+	"数詞": POSNum, "接頭詞": POSAffix, "その他": POSUnknown, "空白文字": POSPunct,
 }
 
 // internalPOS is the set of coarse parts of speech, so a backend that already
@@ -104,6 +114,27 @@ func POSByTag(tag string) (POS, bool) {
 	}
 	p, ok := posTags[tag]
 	return p, ok
+}
+
+// POSFromTags resolves a backend's full POS tuple to a coarse part of speech.
+//
+// Only the first tag used to be consulted, and that is a trap: SudachiDict
+// analyses 誰 as 代名詞 but analyses many words as 名詞,代名詞 or
+// 動詞,非自立可能, so a tag the table did not know about silently produced a
+// token with no part of speech at all. A word with no POS is a word the noun
+// phrase builder cannot use, and the symptom arrives three stages later as a
+// missing argument.
+//
+// The tuple is scanned left to right and the first tag the table recognises
+// wins, which is the reading the order of the tuple already implies: the
+// leftmost tag is the most general and the rightmost the most specific.
+func POSFromTags(tags []string) POS {
+	for _, t := range tags {
+		if p, ok := POSByTag(t); ok {
+			return p
+		}
+	}
+	return ""
 }
 
 // Morph is one node of the morphological lattice. Surface, dictionary form,

@@ -351,10 +351,8 @@ func (a *Analysis) Lattice(source string) *forest.MorphForest {
 			Unknown: t.Unknown,
 			Script:  scriptOf(t.Surface),
 		}
-		if len(t.POS) > 0 {
-			if pos, ok := forest.POSByTag(t.POS[0]); ok {
-				m.POS = pos
-			}
+		if pos := forest.POSFromTags(t.POS); pos != "" {
+			m.POS = pos
 		}
 		morphs = append(morphs, m)
 	}
