@@ -1,0 +1,28 @@
+
+88 sentences
+
+  morphology resolved       48/88
+  predicate resolved        17/88   (-31)
+  semantic frame resolved    5/88   (-12)
+  construction available     4/88   (-1)
+  candidate generated        4/88
+  verification passed        0/88   (-4)
+
+  opaque surfaces           162/1148 = 14.1%
+  raw candidates           162
+  accepted by the gate     0
+  dropped by the gate      162
+
+  why arguments were lost
+     73  unknown_predicate:UNKNOWN.VERB
+     31  no_arguments_bound
+      5  missing_role:theme
+      3  missing_role:comitative
+      1  missing_role:agent
+      1  missing_role:recipient
+      1  missing_role:experiencer
+      1  missing_role:product
+
+  e.g. candidate generated: これも随分たよりないことだ。
+       {"acceptedCandidates": 0, "constructionsComplete": true, "constructionsSelected": 1, "constructionsTotal": 1, "framesComplete": true, "framesResolved": 1, "framesTotal": 1, "morphologyComplete": true, "opaqueTokens": 0, "openPositions": 1, "predicatesComplete": true, "predicatesResolved": 1, "predicatesTotal": 1, "rawCandidates": 2, "rejectedByGate": 0, "tokens": 7, "verified": 0}
+

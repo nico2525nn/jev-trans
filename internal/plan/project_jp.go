@@ -477,10 +477,20 @@ func inList(list []jlir.ID, id jlir.ID) bool {
 	return false
 }
 
-// jpSentenceFinal picks the sentence final particle from the attitude recorded
-// in the pragmatic layer, falling back on the style profile. An empty result
-// means the planner wrote no particle at all, which is the neutral default for
-// Japanese written prose.
+// jpSentenceFinal picks the sentence-final particle.
+//
+// The source's own particle is mirrored and nothing else is invented. The
+// previous version fell back to ね whenever politeness was at least 0.5, and
+// separately treated an attitude of "polite" as licence for ね. Both conflate
+// register with stance: です makes a sentence polite, and ね makes it
+// agreeable, and 「Taro gave a book to Hanako.」 turned into
+// 「太郎は本を花子に渡しましたね。」 — an attitude the speaker never expressed,
+// inserted with no record of why.
+//
+// A particle is now emitted only when the source carries one, or when the
+// source's own stance demands a counterpart the Japanese reader expects. Style
+// selects register, which is applied to the morphology, not to the
+// sentence-final mood.
 func jpSentenceFinal(r Request, g *jlir.Graph) string {
 	attitude := ""
 	parts := []string{}
@@ -494,17 +504,15 @@ func jpSentenceFinal(r Request, g *jlir.Graph) string {
 			return s
 		}
 	}
+	// Stance only, and never register: "polite" is deliberately absent, because
+	// politeness is expressed by です/ます and a particle on top of it is an
+	// addition rather than a translation.
 	switch attitude {
 	case "question", "確認", "interrogative":
 		return "か"
-	case "exclamation", "感嘆":
+	case "exclamation", "感嘆", "emphatic", "断定":
 		return "よ"
-	case "soft", "hedged", "polite", "epistemic":
-		return "ね"
-	case "assertive", "emphatic", "断定":
-		return "よ"
-	}
-	if r.Style.Normalized().Politeness >= 0.5 {
+	case "soft", "hedged", "epistemic":
 		return "ね"
 	}
 	return ""

@@ -3,11 +3,14 @@ package pipeline_test
 import (
 	"context"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/nico/jev-trans/internal/jlir"
 	"github.com/nico/jev-trans/internal/lang"
 	"github.com/nico/jev-trans/internal/lex"
+	"github.com/nico/jev-trans/internal/pipeline"
+	"github.com/nico/jev-trans/internal/plan"
 	"github.com/nico/jev-trans/internal/semantics"
 	"github.com/nico/jev-trans/internal/syntax"
 )
@@ -130,6 +133,56 @@ func predicates(g *jlir.Graph) []string {
 	out := make([]string, 0, len(g.Events))
 	for _, e := range g.Events {
 		out = append(out, e.Predicate)
+	}
+	return out
+}
+
+// TestNoUnsupportedSentenceFinalParticle pins a pragmatic invention.
+//
+// 「Taro gave a book to Hanako.」 came out as 「太郎は本を花子に渡しましたね。」
+// The ね has no source: politeness and sentence-final stance are different
+// things, and treating politeness >= 0.5 as licence to add ね inserts an
+// attitude the speaker never expressed. Nothing in the response said so either.
+func TestNoUnsupportedSentenceFinalParticle(t *testing.T) {
+	// The politeness the CLI defaults to, because that is where the particle
+	// appeared. A zero-valued profile does not reproduce it.
+	for _, politeness := range []float64{0.3, 0.5, 0.7} {
+		resp, err := engine(t).Translate(t.Context(), pipeline.Request{
+			Text: "Taro gave a book to Hanako.", SourceLang: lang.EN, TargetLang: lang.JA,
+			DocumentID: t.Name(), Mode: "auto",
+			Style: plan.StyleProfile{Register: plan.RegisterNeutral, Politeness: politeness},
+		})
+		if err != nil {
+			t.Fatalf("Translate: %v", err)
+		}
+		if resp.Result.Selected == nil {
+			t.Fatalf("politeness %.1f: no candidate selected", politeness)
+		}
+		got := resp.Result.Selected.Text
+		src := sourceSentenceFinals(resp)
+		for _, p := range []string{"ね", "よ", "か", "な", "ぞ", "ぜ", "わ", "さ"} {
+			if strings.Contains(got, p) && !src[p] {
+				t.Errorf("politeness %.1f: target %q adds the sentence-final particle %q, "+
+					"which the source does not have and no explicit style asked for",
+					politeness, got, p)
+			}
+		}
+	}
+}
+
+// sourceSentenceFinals collects the particles the source sentence actually
+// ends its clauses with, from the analysis the pipeline recorded.
+func sourceSentenceFinals(resp *pipeline.Response) map[string]bool {
+	out := map[string]bool{}
+	g := resp.JLIR.Source
+	if g == nil {
+		return out
+	}
+	for _, p := range g.SourceFeat.SentenceFinalParticles {
+		out[p] = true
+	}
+	for _, p := range g.Prag.SentenceFinalParticles {
+		out[p] = true
 	}
 	return out
 }
