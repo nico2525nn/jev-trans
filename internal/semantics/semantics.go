@@ -888,7 +888,24 @@ func (a *analyzer) arguments(c *syntax.Clause, sense *ontology.Sense, ev *jlir.E
 		a.infoSubject(c, p)
 	}
 	if p := c.Object; p != nil {
-		a.bindSlot(c, ev, sense, p, objectRoles, "object", ja)
+		if !a.bindSlot(c, ev, sense, p, objectRoles, "object", ja) && ja && p.Case == "wo" {
+			// Japanese marks the place of motion with を as readily as で or に:
+			// 「野原を歩く」 is walking *through the field*, and 歩く is
+			// intransitive so there is no object for the を to fill.
+			//
+			// Bound as an object the phrase competed for the theme, lost it, and
+			// was then dropped — so 「道が悪いので野原を歩く」 came out as "A road
+			// goes.", which is not a degraded translation of the sentence but a
+			// different one. The を-object that binds to nothing and names a place
+			// is the destination of a motion verb, and MOVE's goal slot is exactly
+			// that.
+			if a.bindSlot(c, ev, sense, p, []string{jlir.RoleGoal, jlir.RoleLocation, jlir.RoleSource},
+				"object", ja) {
+				c.Notes = append(c.Notes,
+					"を-marked phrase bound as the goal of an intransitive motion: "+
+						"Japanese uses を for the place of motion and the predicate has no object")
+			}
+		}
 	}
 
 	keys := make([]string, 0, len(c.Indirect))
@@ -935,16 +952,21 @@ func (a *analyzer) arguments(c *syntax.Clause, sense *ontology.Sense, ev *jlir.E
 }
 
 // bindSlot normalizes one surface phrase and attaches the resulting entity.
+// bindSlot attaches a phrase to a role and reports whether it did.
+//
+// The report matters because a caller sometimes has a second reading to try,
+// and 「野原を歩く」 is that case: the を-phrase does not fill an object role,
+// but it does name the place the walk happens in.
 func (a *analyzer) bindSlot(c *syntax.Clause, ev *jlir.Event, sense *ontology.Sense,
-	p *syntax.Phrase, candidates []string, slot string, ja bool) {
+	p *syntax.Phrase, candidates []string, slot string, ja bool) bool {
 	ent := a.entityFor(p, slot)
 	if ent == nil {
-		return
+		return false
 	}
 	if len(candidates) == 0 {
 		a.note(c, "%s %q: surface marker has no role candidates; kept as an entity but not bound",
 			slot, a.phraseText(p))
-		return
+		return false
 	}
 	marker := p.Case
 	if marker == "" {
@@ -953,7 +975,7 @@ func (a *analyzer) bindSlot(c *syntax.Clause, ev *jlir.Event, sense *ontology.Se
 	res := resolveSlot(sense, marker, candidates, slot)
 	if !res.Bound {
 		a.note(c, "%s %q: %s", slot, a.phraseText(p), res.Note)
-		return
+		return false
 	}
 	prov := []jlir.Provenance{jlir.PredSpan(jlir.OriginSyntactic, p.Span, a.b.Source, res.Conf,
 		"%s %q → %s: %s", slot, a.phraseText(p), res.Role, res.Note)}
@@ -962,7 +984,7 @@ func (a *analyzer) bindSlot(c *syntax.Clause, ev *jlir.Event, sense *ontology.Se
 	if prev, taken := ev.Args[res.Role]; taken && prev.Value != ent.ID {
 		a.note(c, "%s %q would also be %s, already filled by %s; left unbound",
 			slot, a.phraseText(p), res.Role, prev.Value)
-		return
+		return false
 	}
 	ev.Args[res.Role] = jlir.Arg{Value: ent.ID, Confidence: res.Conf, Prov: prov}
 	ev.Features = append(ev.Features, jlir.Feature{
@@ -975,6 +997,7 @@ func (a *analyzer) bindSlot(c *syntax.Clause, ev *jlir.Event, sense *ontology.Se
 		a.jb.G.SourceFeat.CaseMarkers[marker] = res.Role
 	}
 	a.note(c, "%s %q → %s (%.2f)", slot, a.phraseText(p), res.Role, res.Conf)
+	return true
 }
 
 // adjectivalComitative returns the clause modifier that is the い-adjective of

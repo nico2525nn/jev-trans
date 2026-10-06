@@ -84,10 +84,26 @@ func TestSubordinateAdjectiveIsNotPromoted(t *testing.T) {
 			}
 		}
 	}
-	// The sentence must still produce a candidate; that is what regressed.
+	// The subordinate clause's argument must survive: 野原を is the place the
+	// walk happens in, and losing it produced "A road goes." — not a degraded
+	// translation of the sentence but a different one, and it passed the gate
+	// because the source graph had lost the phrase too.
 	resp := translate(t, "道が悪いので野原を歩く。", lang.JA, lang.EN, "full")
-	if resp.Metrics.EligibleCandidates == 0 {
-		t.Fatal("the subordinate-clause sentence stopped producing a candidate")
+	evs := resp.JLIR.Source.Events
+	if len(evs) == 0 {
+		t.Fatal("no event")
+	}
+	goal := false
+	for _, role := range []string{jlir.RoleGoal, jlir.RoleLocation} {
+		if arg, ok := evs[0].Args[role]; ok {
+			goal = true
+			if resp.JLIR.Source.Entity(arg.Value) == nil {
+				t.Fatalf("the goal points at an entity that is not in the graph")
+			}
+		}
+	}
+	if !goal {
+		t.Fatalf("the を-marked place of motion was dropped; args=%v", evs[0].Args)
 	}
 }
 
