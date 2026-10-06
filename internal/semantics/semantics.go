@@ -894,6 +894,17 @@ func (a *analyzer) arguments(c *syntax.Clause, sense *ontology.Sense, ev *jlir.E
 		a.bindSlot(c, ev, sense, p, markerCandidates(marker, ja), "indirect", ja)
 	}
 
+	// 「明るくなった」 is 「い-adjective + なる」: the predicate is なる and the
+	// adjective supplies what it became. The parser already files the adjective
+	// as a clause modifier; nothing bound it, so every 〜くなる and 〜になる
+	// sentence was reported as a frame loss — which reads as the binder having
+	// failed on a role nobody had asked it for.
+	if ja && sense.Accepts(jlir.RoleComitative) && !ev.HasRole(jlir.RoleComitative) {
+		if p := a.adjectivalComitative(c); p != nil {
+			a.bindSlot(c, ev, sense, p, []string{jlir.RoleComitative}, "modifier", ja)
+		}
+	}
+
 	// Japanese drops the subject. When the predicate needs one, the missing
 	// argument is a zero anaphor with a real referent distribution (plan.md §15),
 	// never a silently absent role.
@@ -950,6 +961,48 @@ func (a *analyzer) bindSlot(c *syntax.Clause, ev *jlir.Event, sense *ontology.Se
 		a.jb.G.SourceFeat.CaseMarkers[marker] = res.Role
 	}
 	a.note(c, "%s %q → %s (%.2f)", slot, a.phraseText(p), res.Role, res.Conf)
+}
+
+// adjectivalComitative returns the clause modifier that is the い-adjective of
+// a 〜くなる / 〜になる construction, as a phrase the binder can use.
+//
+// Two conditions, and both are needed. The adjective must be there, and the
+// clause head must be なる: 「道が悪いので野原を歩く」 also files 悪い as a
+// modifier, but that adjective is the predicate of the subordinate ので-clause
+// and has nothing to do with the main predicate's comitative. Promoting it
+// there attaches a sub-clause's content to the matrix event and the sentence
+// stops parsing.
+//
+// Only an adjective qualifies the slot. A で-modifier in the same place is
+// instrumental and must not be promoted, and neither is a noun.
+func (a *analyzer) adjectivalComitative(c *syntax.Clause) *syntax.Phrase {
+	if c == nil {
+		return nil
+	}
+	if m := a.b.Morph(c.Matrix); m == nil || !narVerb[m.Lem] {
+		return nil
+	}
+	for _, id := range c.Modifiers {
+		m := a.b.Morph(id)
+		if m == nil || m.POS != forest.POSAdj {
+			continue
+		}
+		return &syntax.Phrase{
+			ID:   "adj-" + id,
+			Head: id,
+			Span: jlir.Span{Start: m.Start, End: m.End},
+			Notes: []string{
+				"い-adjective of a 〜くなる / 〜になる construction; supplies the comitative the CHANGE frame requires",
+			},
+		}
+	}
+	return nil
+}
+
+// narVerb is the lemma set of なる and its derivatives, which is what makes a
+// preceding adjective the comitative rather than a subordinate predicate.
+var narVerb = map[string]bool{
+	"なる": true, "成る": true, "なれる": true, "ナール": true,
 }
 
 // zeroSubject synthesizes the argument Japanese left unexpressed.

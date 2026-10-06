@@ -532,6 +532,13 @@ func (p *jaParse) arguments(c *Clause, sp jaSpan) {
 
 		case m.POS == forest.POSAdj:
 			switch {
+			// The く-form is the adverbial form, and it cannot modify a following
+			// noun: 「暑くなった」 is 暑い + なる, not a noun phrase with a
+			// premodifier. Without this the adjective was folded into whatever
+			// noun phrase happened to be open, and the 〜くなる construction lost
+			// the one word that says what became what.
+			case p.adverbialAdj(m, i):
+				c.Modifiers = append(c.Modifiers, m.ID)
 			case np == nil:
 				c.Modifiers = append(c.Modifiers, m.ID)
 			default:
@@ -920,6 +927,23 @@ func (p *jaParse) quantifier(c *Clause) {
 			return
 		}
 	}
+}
+
+// adverbialAdj reports whether an い-adjective is in its adverbial form
+// and stands directly before a verb, which is what makes it the predicate's
+// comitative rather than a noun's premodifier.
+//
+// The く-form is never premodifier in Japanese — the na-form and の are — so an
+// adjective ending in く that is followed by a verb is unambiguous evidence.
+func (p *jaParse) adverbialAdj(m *forest.Morph, i int) bool {
+	if m == nil || !strings.HasSuffix(m.Surface, "く") {
+		return false
+	}
+	next := i + 1
+	for next < len(p.ms) && p.ms[next].POS == forest.POSAffix {
+		next++
+	}
+	return next < len(p.ms) && (p.ms[next].POS == forest.POSVerb || p.ms[next].POS == forest.POSAux)
 }
 
 // zeroSubject creates the first-class zero argument plan.md §15 requires.

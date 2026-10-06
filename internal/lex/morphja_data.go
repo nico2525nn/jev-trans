@@ -938,6 +938,21 @@ var jaVerbsGodan = []jaEntry{
 }
 
 var jaVerbsIchidan = []jaEntry{
+	// なる and the polite auxiliaries were missing, and both are load-bearing.
+	//
+	// Without なる every 〜くなる and 〜になる sentence segmented as
+	// な/PARTICLE + る/UNKNOWN in the builtin analyser: 「空が青くなった。」 had
+	// no finite predicate, the clause was a fragment, and the sentence died
+	// before the semantic layer saw it. Without ます the polite register was
+	// equally unrepresentable — every です/ます sentence lost its politeness on
+	// the builtin path while working on the Sudachi path.
+	//
+	// The builtin analyser is the fallback when no external analyser is
+	// installed, so a gap here is a gap for anyone who does not have Sudachi.
+	{"なる", jaPVerb, "", "成る", "cj=i frame=intransitive", 3},
+	{"なっ", jaPVerb, "", "成る", "cj=i frame=intransitive", 5},
+	{"成る", jaPVerb, "", "成る", "cj=i frame=intransitive", 4},
+	{"なれる", jaPVerb, "", "なれる", "cj=i frame=intransitive potential=1", 0},
 	{"食べる", jaPVerb, "", "", "cj=i frame=transitive", 0},
 	{"飲む", jaPVerb, "飲む", "飲む", "cj=g frame=transitive", 1},
 	{"見る", jaPVerb, "", "", "cj=i frame=transitive", 1},
@@ -1067,6 +1082,28 @@ var jaCopulas = []jaEntry{
 // predicates, which is exactly what plan.md §12 refuses to collapse.
 var jaAuxiliaries = []jaEntry{
 	{"いる", jaPAux, "", "居る", "aspect=" + jaAspectProgressive, 0},
+	// The plain past auxiliary. It was absent as a standalone entry, so it was
+	// only ever recognised as the suffix of a conjugation the generator had
+	// produced. Any past form built from a morpheme the generator does not know
+	// — なった from なる, for instance — ended in an unknown token and lost its
+	// tense, which is the single most consequential feature on the clause.
+	{"た", jaPAux, "", "た", "tense=past", 3},
+	{"だ", jaPAux, "", "だ", "copula=1 tense=present", 2},
+	// The polite auxiliary. です/ます is the default register of written
+	// Japanese and neither form was in the builtin table, so a polite sentence
+	// segmented into unknowns on the fallback path while the same sentence
+	// worked whenever Sudachi happened to be installed. tense is on the
+	// auxiliary rather than only on です so that ました and ません are read from
+	// the same rule.
+	{"ます", jaPAux, "", "ます", "politeness=polite tense=present", 0},
+	{"ます", jaPAux, "", "ます", "politeness=polite tense=present cj=m", 1},
+	{"ました", jaPAux, "", "ます", "politeness=polite tense=past", 4},
+	{"まして", jaPAux, "", "ます", "politeness=polite tense=past", 4},
+	{"ません", jaPAux, "", "ない", "politeness=polite tense=present polarity=negative", 4},
+	{"ませんでした", jaPAux, "", "ない", "politeness=polite tense=past polarity=negative", 0},
+	{"です", jaPAux, "", "です", "copula=1 politeness=polite", 0},
+	{"でした", jaPAux, "", "です", "copula=1 politeness=polite tense=past", 4},
+	{"でしょう", jaPAux, "", "でしょう", "mood=hypothetical politeness=polite", 0},
 	{"て", jaPAffix, "", "", "conj=te", 0},
 	{"で", jaPAffix, "", "", "conj=te", 1},
 	{"しまう", jaPAux, "", "しまう", "completion=" + jaCompletionDone + " mood=regret", 0},
