@@ -33,6 +33,7 @@ actually did, cumulatively, and this script only sums it.
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 
@@ -59,10 +60,10 @@ FUNNEL_KEYS = ("rawCandidates", "eligibleCandidates", "certifiedCandidates",
                "shortlistedCandidates", "selected")
 
 
-def measure(sentence):
+def measure(sentence, src="ja", tgt="en"):
     """Return the pipeline's own metrics for one sentence."""
     p = subprocess.run(
-        [BIN, "translate", "--text", sentence, "--src", "ja", "--tgt", "en", "--json"],
+        [BIN, "translate", "--text", sentence, "--src", src, "--tgt", tgt, "--json"],
         capture_output=True, timeout=120,
     )
     if not p.stdout.strip():
@@ -94,13 +95,42 @@ def main():
                     help="measure only the first N sentences")
     ap.add_argument("--show", type=int, default=5,
                     help="how many example sentences to print per stage (0 for none)")
+    ap.add_argument("--bench", action="store_true",
+                    help="run every suite under corpus/bench/ and print one table per suite")
     args = ap.parse_args()
-    path, limit, show = args.path, args.limit, args.show
 
+    if args.bench:
+        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "corpus", "bench")
+        suites = []
+        for name in ("synthetic", "modern", "conversation", "literary"):
+            p = os.path.join(base, name + ".json")
+            if os.path.exists(p):
+                suites.append((name, p))
+        if not suites:
+            print("no suites under corpus/bench/; run: python3 tools/bench_build.py", file=sys.stderr)
+            sys.exit(1)
+        for name, p in suites:
+            print(f"===== {name} =====")
+            run_file(p, args.limit, args.show)
+        return
+
+    run_file(args.path, args.limit, args.show)
+
+
+def run_file(path, limit, show):
     sentences = json.load(open(path, encoding="utf-8"))
     if limit:
         sentences = sentences[:limit]
-    total = len(sentences)
+    # Suite files hold {"text","dir"} records; the legacy file is bare strings.
+    items = []
+    for s in sentences:
+        if isinstance(s, dict):
+            src, _, tgt = (s.get("dir") or "ja-en").partition("-")
+            tgt = tgt or "en"
+            items.append((s.get("text", ""), src or "ja", tgt))
+        else:
+            items.append((s, "ja", "en"))
+    total = len(items)
 
     counts = {name: 0 for name, *_ in STAGES}
     tokens = opaque = 0
@@ -112,8 +142,8 @@ def main():
     gaps = []
     blockers = {}
 
-    for s in sentences:
-        m = measure(s)
+    for s, src, tgt in items:
+        m = measure(s, src, tgt)
         if m is None:
             continue
         if m.get("__missing__"):
