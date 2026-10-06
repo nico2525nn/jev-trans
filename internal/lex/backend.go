@@ -408,17 +408,57 @@ func scriptOf(s string) forest.Script {
 
 // copulaMarkers are the elements of a Universal POS tuple that identify the
 // copula. Sudachi puts them after the coarse part of speech.
-var copulaMarkers = []string{"デス", "ダ", "デアル", "ナイ"}
+var copulaMarkers = []string{"デス", "ダ", "デアル"}
 
+// tenseMarkers deliberately does NOT include 終止形-一般 or 連用形-一般.
+//
+// Those name a CONJUNCTIVE form, not a tense. Treating them as "present" was
+// wrong twice over: 連用形-一般 is the stem of て/た/ます, so 渡した came back as
+// a present verb and 「渡した」 produced "gave"→"gives"; and it masked the
+// surface check that would otherwise have found た and composed PAST from it.
+//
+// Tense is composed from the auxiliary, not from the name of the form:
+//
+//	た            -> past
+//	ます/です      -> present + polite
+//	ました/でした   -> past + polite
+//	ない/ません     -> present, negative
+//	なかった      -> past, negative
 var tenseMarkers = map[string]string{
-	"終止形-一般": "present", "連用形-一般": "present", "終止形-过去": "past",
-	"連用形-过去": "past", "未然形-一般": "", "命令形-一般": "",
+	"終止形-過去": "past",
+	"連用形-過去": "past",
+	"命令形-一般": "imperative",
 }
 
-var tenseOfConj = map[string]string{
-	"終止形": "present", "連用形": "present", "連体形": "present",
-	"未然形": "present", "命令形": "imperative", "終止形-过去": "past",
+// auxiliaryTense composes the tense an auxiliary surface carries.
+var auxiliaryTense = map[string]struct {
+	Tense      string
+	Negative   bool
+	Politeness bool
+}{
+	"た":      {"past", false, false},
+	"でした":    {"past", false, true},
+	"ました":    {"past", false, true},
+	"だった":    {"past", false, false},
+	"であった":   {"past", false, false},
+	"ます":     {"present", false, true},
+	"です":     {"present", false, true},
+	"ません":    {"present", true, true},
+	"ない":     {"present", true, false},
+	"なかった":   {"past", true, false},
+	"ませんでした": {"past", true, true},
+	"ないです":   {"present", true, true},
+	"ないでした":  {"past", true, true},
+	"でしょう":   {"present", false, true},
+	"ますか":    {"present", false, true},
+	"ましょう":   {"present", false, true},
 }
+
+// だ, である and だろう are deliberately absent from the table above. だ is the
+// plain copula (present) standing alone and the ta-form (past) attached to a
+// verb, and Sudachi reports 読んだ as 読ん + だ whichever it meant. Only the
+// analyser that knows the attachment can tell them apart, so the decision is
+// left to the clause parser rather than guessed here.
 
 // applyJapaneseFeatures translates the Universal POS tuple into the feature
 // vocabulary the core reads. A backend that reports a richer analysis should
@@ -433,44 +473,83 @@ func applyJapaneseFeatures(feats map[string]string, pos []string, surface string
 		if t, ok := tenseMarkers[el]; ok && t != "" && feats["tense"] == "" {
 			feats["tense"] = t
 		}
-		// A case particle. The core reads Morph.Case(), which is how the clause
-		// parser knows that 太郎が carries a subject marker at all, and Sudachi
-		// reports it only as 助詞-格助詞 with no case feature. Without this,
-		// every argument of an externally analysed sentence silently fell out of
-		// the clause: 「太郎が花子に本を渡した」 came out with one theme and no
-		// agent and no recipient.
+		// A particle. The core reads Morph.Case(), which is how the clause parser
+		// knows that 太郎が carries a subject marker at all, and Sudachi reports
+		// が only as 助詞-格助詞 with no case feature. Without this, every
+		// argument of an externally analysed sentence silently fell out of the
+		// clause.
+		//
+		// The FUNCTION is recorded as well as the marker. A topic marker is not a
+		// case marker, a sentence-final ね is not either, and conflating them
+		// makes the argument binder reach for particles that bind nothing.
 		if isCaseParticleSurface(surface) && feats["case"] == "" {
-			feats["case"] = canonicalCaseMarker(surface)
-		}
-		for pre, val := range tenseOfConj {
-			if strings.HasPrefix(el, pre) && feats["tense"] == "" {
-				feats["tense"] = val
+			marker := canonicalCaseMarker(surface)
+			feats["case"] = marker
+			feats["particle_function"] = marker
+			if !bindsClauseArgument(marker) {
+				feats["binds_argument"] = "false"
 			}
 		}
 	}
-	if feats["tense"] == "" && strings.Contains(surface, "た") {
-		feats["tense"] = "past"
+
+	// Tense is composed from the auxiliary the surface actually is, so た makes
+	// a past predicate whether or not the analyser called its form 終止形-一般.
+	if aux, ok := auxiliaryTense[surface]; ok {
+		if feats["tense"] == "" || aux.Tense == "past" {
+			feats["tense"] = aux.Tense
+		}
+		if aux.Negative {
+			feats["negative"] = "true"
+		}
+		if aux.Politeness {
+			feats["polite"] = "true"
+		}
 	}
 }
 
-// japaneseCaseParticles maps the surface of a Japanese case particle onto the
-// marker the core uses. The core keys on the romanised marker because the
-// builtin analyser emits that; an external analyser emits the surface, and
-// translating it here is what keeps both backends interchangeable.
-var japaneseCaseParticles = map[string]string{
-	"が": "ga", "で": "de", "に": "ni", "へ": "he", "と": "to",
-	"も": "mo", "の": "no", "や": "ya", "か": "ka", "ね": "ne",
-	"から": "kara", "まで": "made", "より": "yori", "ほど": "hodo",
+// Japanese particle function, and the marker the core uses for it.
+//
+// The classification matters because "case" is the wrong name for the whole set.
+// が and を attach a clause argument; は marks a topic, which the core tracks
+// separately; の is genitive; や coordinates nouns; and ね and か close a sentence.
+// Treating the last three as case markers made the argument binder reach for them,
+// and it treated a missing を as an unmarked object — which is a real Japanese
+// pattern, so the golden case passed for the wrong reason.
+//
+// The core keys on the romanised marker because the builtin analyser emits that;
+// an external analyser emits the surface, and translating here is what keeps the
+// two backends interchangeable.
+var japaneseParticleFunction = map[string]string{
+	// clause arguments
+	"が": "ga", "を": "wo", "に": "ni", "へ": "he", "で": "de",
+	"と": "to", "から": "kara", "より": "yori", "まで": "made",
+	// topic and additive — recorded, but not clause arguments
+	"は": "wa", "も": "mo",
+	// genitive, folded into the head noun
+	"の": "no",
+	// coordination and sentence-final: not markers at all
+	"や": "ya", "か": "ka", "ね": "ne", "よ": "yo", "な": "na",
+	"ぞ": "zo", "ぜ": "ze", "さ": "sa", "し": "shi",
 }
 
-// isCaseParticleSurface reports whether the token is one of them. Two-character
-// markers are checked first because から and まで contain one.
+// japaneseArgumentParticles are the ones that can bind a clause argument. A
+// token outside this set must never be offered to the argument binder, even when
+// the analyser tagged it as a particle.
+var japaneseArgumentParticles = map[string]bool{
+	"ga": true, "wo": true, "ni": true, "he": true, "de": true,
+	"to": true, "kara": true, "yori": true, "made": true,
+}
+
+// isCaseParticleSurface reports whether the token is a Japanese particle at all.
 func isCaseParticleSurface(surface string) bool {
-	if _, ok := japaneseCaseParticles[surface]; ok {
-		return true
-	}
-	return false
+	_, ok := japaneseParticleFunction[surface]
+	return ok
 }
 
 // canonicalCaseMarker returns the core's marker for a particle surface, or "".
-func canonicalCaseMarker(surface string) string { return japaneseCaseParticles[surface] }
+func canonicalCaseMarker(surface string) string { return japaneseParticleFunction[surface] }
+
+// bindsClauseArgument reports whether the marker attaches a clause argument. は
+// and も carry information but attach nothing by themselves; they are recorded so
+// the topic and additive readings survive.
+func bindsClauseArgument(marker string) bool { return japaneseArgumentParticles[marker] }

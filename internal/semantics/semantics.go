@@ -663,6 +663,18 @@ func (a *analyzer) morphology(c *syntax.Clause, ev *jlir.Event) {
 		ev.Mood = c.Mood
 		ev.Prov = append(ev.Prov, prov(jlir.OriginMorphological, "mood %s", c.Mood)...)
 	}
+	// A verb whose spelling does not carry its tense travels with the event, so
+	// the verifier can tell "the target says it is present" apart from "the
+	// target cannot say". English writes read/read and set/set; rejecting on that
+	// rejects correct sentences, and accepting on it asserts what the evidence
+	// does not support.
+	if m != nil && m.Feat("tense_ambiguous") != "" {
+		ev.Features = append(ev.Features, jlir.Feature{
+			Key: "tense_ambiguous", Value: true, Confidence: 1,
+			Prov: prov(jlir.OriginMorphological,
+				"%s is spelled identically in the present and the past", m.Text(a.b.Source)),
+		})
+	}
 	if c.Causation != "" {
 		ev.Causation = c.Causation
 	}
@@ -688,9 +700,27 @@ func (a *analyzer) morphology(c *syntax.Clause, ev *jlir.Event) {
 	}
 }
 
+// tense recovers the clause tense from the predicate and the auxiliaries that
+// hang off it.
+//
+// The auxiliaries matter because a real analyser splits them off: 読んだ is
+// 読ん + た, and the bare stem carries no tense at all. Reading tense from the
+// matrix morpheme alone is why 「渡した」 came out as "gave" and 「読んだ」 as
+// "reads". Japanese tense lives in the auxiliary, not in the verb's own form.
 func (a *analyzer) tense(c *syntax.Clause, m *forest.Morph) (string, string) {
 	if t := normTense(c.Tense); t != jlir.TenseUnknown {
 		return t, "clause analysis"
+	}
+	// The clause's own auxiliaries first: た and ました are unambiguous, while
+	// a stem's features may only describe the form it happens to take.
+	for _, id := range c.Auxiliaries {
+		am := a.b.Morph(id)
+		if am == nil {
+			continue
+		}
+		if t := normTense(am.Feat("tense")); t != jlir.TenseUnknown {
+			return t, "auxiliary " + am.Text(a.b.Source)
+		}
 	}
 	if m != nil {
 		if t := normTense(m.Feat("tense")); t != jlir.TenseUnknown {

@@ -696,9 +696,22 @@ func (v *verifier) compareEventFeatures(p eventPair, item string) {
 	}
 
 	if st, tt := normalizeFeature(s.Tense), normalizeFeature(t.Tense); st != "" && tt != "" && st != tt {
-		if equivalentTense(st, tt) {
+		switch {
+		case equivalentTense(st, tt):
 			v.note("%s: tense %s/%s is licensed by the target language's inflection", item, st, tt)
-		} else {
+		case tenseUnverifiable(t):
+			// The target's own analyser says its verb's spelling does not carry
+			// the tense: English writes read/read, set/set, put/put. Rejecting on
+			// that is rejecting a correct sentence because of an orthographic
+			// accident, and calling it a match would be asserting something the
+			// evidence does not support either. It stays open, and the decision
+			// layer settles it.
+			v.add(soft(DiffTense, item, s.Tense, t.Tense,
+				"tense could not be checked: "+orNone(t.Predicate)+" is spelled the same in the "+
+					"present and the past, so the written form carries no tense"),
+				DimTemporal, lossAspectChanged, DiffTense)
+			v.underdetermined = true
+		default:
 			v.add(hard(DiffTense, item, s.Tense, t.Tense,
 				"tense changed from "+s.Tense+" to "+t.Tense),
 				DimTemporal, lossTenseChanged, DiffTense)
@@ -744,6 +757,22 @@ func (v *verifier) compareEventFeatures(p eventPair, item string) {
 			"causal framing changed from "+orNone(s.Causation)+" to "+orNone(t.Causation)),
 			DimImplicature, lossCausationLost, DiffImplicature)
 	}
+}
+
+// tenseUnverifiable reports whether the target analyser said its own verb's
+// spelling does not carry the tense. English writes read/read, set/set,
+// put/put, so "Taro read a book" and "Taro reads a book" are the same string
+// and a verifier that reads the string is reading nothing.
+func tenseUnverifiable(t *jlir.Event) bool {
+	if t == nil {
+		return false
+	}
+	for _, f := range t.Features {
+		if f.Key == "tense_ambiguous" {
+			return true
+		}
+	}
+	return false
 }
 
 // equivalentTense reports whether a tense difference is licensed by the target
@@ -1369,7 +1398,12 @@ func (v *verifier) collectRejections(hardDiffs []Diff) {
 		v.res.Rejections = append(v.res.Rejections,
 			"UNPARSABLE: the target sentence could not be re-parsed")
 	case StatusUnderdetermined:
-		v.res.Rejections = append(v.res.Rejections,
+		// Recorded as a note, not as a rejection. The gate reads
+		// Result.Rejections, and plan.md §61 lists UNDERDETERMINED as a status
+		// rather than a failure: the target needs a distinction the source
+		// cannot supply, §62 has the user settle it, and refusing the candidate
+		// here turns an honest "I cannot check this" into an empty result.
+		v.res.Notes = append(v.res.Notes,
 			"UNDERDETERMINED: the target needs a distinction the source cannot supply")
 	}
 	for _, d := range hardDiffs {

@@ -127,7 +127,10 @@ var enTableA = []entry{
 	{Base: "advise", Spec: "COMMUNICATE.13:0.90"},
 	{Base: "apologize", Spec: "COMMUNICATE.14:0.90"},
 	{Base: "report", Spec: "COMMUNICATE.02:0.84"},
-	{Base: "read", Spec: "PERCEIVE.01:0.42 MENTAL.11:0.28 WORK.02:0.16 COMMUNICATE.07:0.10"},
+	// WORK.04 is READ, which is what an English "read" with a direct object
+	// means; PERCEIVE.01 led this table before and the READ construction was
+	// unreachable, so "reads a book" came back as a perception.
+	{Base: "read", Spec: "WORK.04:0.90 PERCEIVE.01:0.06 MENTAL.11:0.04"},
 }
 
 // enTableB: cognition, affect, perception.

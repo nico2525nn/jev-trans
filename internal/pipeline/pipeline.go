@@ -1081,6 +1081,10 @@ func stageMetrics(
 	for _, e := range g.Events {
 		if frameFilled(g, e) {
 			m.FramesResolved++
+			continue
+		}
+		for _, why := range frameLosses(g, e) {
+			m.FrameLosses = append(m.FrameLosses, why)
 		}
 	}
 	m.FramesComplete = m.FramesTotal > 0 && m.FramesResolved == m.FramesTotal
@@ -1112,6 +1116,55 @@ func stageMetrics(
 		m.ConstructionsComplete = false
 	}
 	return m
+}
+
+// frameLosses names why an event is missing a role its frame requires.
+//
+// A frame drop is otherwise just a number, and the next fix would be a guess.
+// Each cause is a stable slug so the corpus tool can group them and the most
+// frequent one can be attacked first.
+func frameLosses(g *jlir.Graph, e *jlir.Event) []string {
+	if e == nil {
+		return []string{"no event"}
+	}
+	pred := g.Predicate(e.Predicate)
+	if pred == nil {
+		return []string{"unknown_predicate:" + e.Predicate}
+	}
+	var out []string
+	for _, spec := range pred.Args {
+		if !spec.Required || e.HasRole(spec.Role) {
+			continue
+		}
+		switch {
+		case len(e.Args) == 0:
+			// Nothing bound at all: the argument binder never saw a phrase.
+			out = append(out, "no_arguments_bound")
+		default:
+			out = append(out, "missing_role:"+spec.Role)
+		}
+	}
+	if len(out) == 0 && len(e.Args) == 0 {
+		return []string{"no_arguments_bound"}
+	}
+	if len(out) == 0 {
+		out = append(out, "unknown_predicate:"+e.Predicate)
+	}
+	sort.Strings(out)
+	return dedupeStrings(out)
+}
+
+func dedupeStrings(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // frameFilled reports whether an event carries every role its ontology frame

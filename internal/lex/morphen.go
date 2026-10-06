@@ -346,6 +346,15 @@ func enIsVerbReading(rs []enReading) bool {
 	return false
 }
 
+// enTenseAmbiguousIrregulars are verbs whose base, past and participle are all
+// spelled the same, so the written form carries no tense at all.
+var enTenseAmbiguousIrregulars = map[string]bool{
+	"read": true, "set": true, "put": true, "cut": true, "let": true,
+	"shut": true, "spread": true, "spend": true, "burst": true,
+}
+
+func enTenseAmbiguousIrregular(l string) bool { return enTenseAmbiguousIrregulars[l] }
+
 func enReadingFromVerb(vf enVerbReading) enReading {
 	var f map[string]string
 	switch vf.Kind {
@@ -358,6 +367,15 @@ func enReadingFromVerb(vf enVerbReading) enReading {
 	default:
 		f = enFs("class", "verb", "tense", "present", "part", "finite", "person", "3",
 			"number", "sing", "lemma_kind", "irregular")
+	}
+	// English has verbs whose present and past are spelled identically: read,
+	// set, put, cut, let, shut, spread, spend. "Taro read a book" and "Taro
+	// reads a book" differ only in a sound the written form does not carry, so
+	// the string alone cannot settle the tense — and the verifier must not
+	// reject a correct sentence because of it. The token says so, and the
+	// verifier reads the flag instead of guessing from the spelling.
+	if enTenseAmbiguousIrregular(vf.Lemma) && f["tense"] != "past" {
+		f["tense_ambiguous"] = "true"
 	}
 	return enReading{POS: forest.POSVerb, Lem: vf.Lemma, Feats: f, Weight: 0.93, Rule: "irregular", Dict: true}
 }

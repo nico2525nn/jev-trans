@@ -81,6 +81,7 @@ def main():
     reached_verb = 0
     missing_metrics = 0
     examples = {}
+    losses = {}
 
     for s in sentences:
         m = measure(s)
@@ -93,6 +94,8 @@ def main():
         opaque += m.get("opaqueTokens", 0)
         raw += m.get("rawCandidates", 0)
         accepted += m.get("acceptedCandidates", 0)
+        for why in m.get("frameLosses") or []:
+            losses[why] = losses.get(why, 0) + 1
 
         for name, key, *kind in STAGES:
             if kind and kind[0] == "positive":
@@ -127,6 +130,10 @@ def main():
     print(f"  raw candidates           {raw}")
     print(f"  accepted by the gate     {accepted}")
     print(f"  dropped by the gate      {raw - accepted}")
+    if losses:
+        print("\n  why arguments were lost")
+        for why, n in sorted(losses.items(), key=lambda kv: -kv[1]):
+            print(f"    {n:3}  {why}")
     for name, (s, m) in examples.items():
         print(f"\n  e.g. {name}: {s}")
         print("       " + json.dumps(m, ensure_ascii=False, sort_keys=True))

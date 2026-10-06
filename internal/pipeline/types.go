@@ -205,6 +205,12 @@ type StageMetrics struct {
 	// RejectedWithRule counts candidates the verifier refused, with the rule
 	// names available on Result.Candidates.
 	RejectedByGate int `json:"rejectedByGate"`
+
+	// FrameLosses names, per sentence, why an argument did not reach the
+	// event. Without it a frame drop is a count and the next fix is a guess;
+	// with it the drop is a list of causes and the next fix is chosen from the
+	// most frequent one. Values are stable slugs, not prose.
+	FrameLosses []string `json:"frameLosses,omitempty"`
 }
 
 // Artifacts is everything the UI renders as evidence.

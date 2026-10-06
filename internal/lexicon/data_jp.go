@@ -93,7 +93,11 @@ var jaTableB = []entry{
 	{Base: "忠告する", Spec: "COMMUNICATE.13:0.90"},
 	{Base: "謝る", Spec: "COMMUNICATE.14:0.92"},
 	{Base: "詫びる", Spec: "COMMUNICATE.14:0.90"},
-	{Base: "読む", Spec: "PERCEIVE.01:0.40 MENTAL.11:0.26 WORK.02:0.18"},
+	// WORK.04 is READ, which is what a verb with a を-object means far more
+	// often than "see". PERCEIVE.01 led the table before and won by weight, so
+	// 「本を読んだ」 came out as "saw a book" even though the construction for
+	// READ existed and was unreachable.
+	{Base: "読む", Spec: "WORK.04:0.94 MENTAL.11:0.04 PERCEIVE.01:0.02"},
 	{Base: "報告する", Spec: "COMMUNICATE.02:0.88"},
 	{Base: "通知する", Spec: "COMMUNICATE.02:0.88"},
 	{Base: "思う", Spec: "MENTAL.01:0.66 MENTAL.03:0.20 MENTAL.07:0.10"},

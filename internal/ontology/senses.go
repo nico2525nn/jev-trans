@@ -980,24 +980,28 @@ func sleepSenses() []*Sense {
 
 func copulaSenses() []*Sense {
 	return []*Sense{
+		// The copula takes no と-phrase. と marks a DEFECTIVE predicate — it is
+		// obligatory there and never appears with です or だ — and declaring it
+		// required here made every Japanese copula sentence fail its own frame
+		// check before anything could be verified.
 		sn("COPULA", "copula", "predicate an identity or property of the topic",
-			[]Arg{req(jlir.RoleTheme), req(jlir.RoleComitative), opt(jlir.RoleExperiencer), opt(jlir.RoleTime)},
+			[]Arg{req(jlir.RoleTheme), opt(jlir.RoleExperiencer), opt(jlir.RoleTime), opt(jlir.RoleManner)},
 			fCognition, fDeictic),
 
 		sn("COPULA.01", "copula_plain", "だ — plain identity, written or informal speech",
-			[]Arg{req(jlir.RoleTheme), req(jlir.RoleComitative), opt(jlir.RoleExperiencer), opt(jlir.RoleTime)},
+			[]Arg{req(jlir.RoleTheme), opt(jlir.RoleExperiencer), opt(jlir.RoleTime)},
 			fCognition, fDeictic),
 		sn("COPULA.02", "copula_past", "だった — past copula",
-			[]Arg{req(jlir.RoleTheme), req(jlir.RoleComitative), opt(jlir.RoleExperiencer), opt(jlir.RoleTime), opt(jlir.RoleManner)},
+			[]Arg{req(jlir.RoleTheme), opt(jlir.RoleExperiencer), opt(jlir.RoleTime), opt(jlir.RoleManner)},
 			fCognition, fDeictic, fPast),
 		sn("COPULA.03", "copula_polite", "です — polite identity",
-			[]Arg{req(jlir.RoleTheme), req(jlir.RoleComitative), opt(jlir.RoleExperiencer), opt(jlir.RoleTime)},
+			[]Arg{req(jlir.RoleTheme), opt(jlir.RoleExperiencer), opt(jlir.RoleTime)},
 			fCognition, fDeictic, fSocial),
 		sn("COPULA.04", "copula_formal", "である — written formal identity",
-			[]Arg{req(jlir.RoleTheme), req(jlir.RoleComitative), opt(jlir.RoleExperiencer), opt(jlir.RoleTime)},
+			[]Arg{req(jlir.RoleTheme), opt(jlir.RoleExperiencer), opt(jlir.RoleTime)},
 			fCognition, fDeictic, fSocial),
 		sn("COPULA.05", "copula_conjectural", "でしょう — conjectured identity",
-			[]Arg{req(jlir.RoleTheme), req(jlir.RoleComitative), opt(jlir.RoleExperiencer), opt(jlir.RoleTime)},
+			[]Arg{req(jlir.RoleTheme), opt(jlir.RoleExperiencer), opt(jlir.RoleTime)},
 			fCognition, fDeictic),
 	}
 }

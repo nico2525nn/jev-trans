@@ -124,6 +124,21 @@ func hardRejected(c Candidate) (bool, []string) {
 	return true, rules
 }
 
+// rejectedStatus reports whether a verdict is one the gate must refuse outright.
+//
+// UNDERDETERMINED is deliberately not on this list. It means the target needs a
+// distinction the source cannot supply — English spelling read the same in the
+// present and the past is the everyday case — and plan.md §61 lists it as a
+// status, not as a failure. Refusing it silently turns an honest "I cannot check
+// this" into an empty result; §62 says the user is asked instead.
+func rejectedStatus(status string) bool {
+	switch status {
+	case StatusUnparsable, StatusUnsupported, StatusDivergent:
+		return true
+	}
+	return false
+}
+
 // RankWith runs the §44 hard gate, the §45 dominance pass and the D9 rerank
 // hook over every candidate, and reports the full outcome. It is the only entry
 // point of this file: there is deliberately no shorter wrapper that skips the

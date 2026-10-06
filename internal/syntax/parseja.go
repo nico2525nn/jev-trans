@@ -192,8 +192,12 @@ func (p *jaParse) tier() int {
 type jaSpan struct {
 	from, to int
 	matrix   int
-	aux      []int
-	conjoin  Conjoin
+	// tense is recovered from the auxiliaries while the clause is still being
+	// scanned, because a morpheme ID only exists after the scan finishes and
+	// the stem that carries the meaning carries no tense at all.
+	tense   string
+	aux     []int
+	conjoin Conjoin
 }
 
 // segment splits the morpheme sequence at finite predicates and subordinators.
@@ -230,6 +234,16 @@ func (p *jaParse) segment() []jaSpan {
 		// it follows, which is what Japanese does.
 		if jaIsPureTenseAuxiliary(m) && cur.matrix >= 0 {
 			cur.aux = append(cur.aux, i)
+			// た is the only thing that makes 読ん past, so the tense is taken
+			// here where the morpheme is in hand. The ID does not exist yet.
+			//
+			// Sudachi reports the auxiliary as its dictionary form, so the た of
+			// 読んだ arrives as だ. Attached to a verb, だ is the ta-form and
+			// means past; standing alone it is the plain copula and means
+			// present, so the position decides and the surface cannot.
+			if t := jaAuxiliaryTense(m); t != "" && cur.tense == "" {
+				cur.tense = t
+			}
 			cur.to = i
 			continue
 		}
@@ -248,6 +262,12 @@ func (p *jaParse) segment() []jaSpan {
 				// The matrix is a te-form verb, so a following finite morpheme is
 				// its auxiliary (食べて + いる), not the head of a new clause.
 				cur.aux = append(cur.aux, i)
+				// The auxiliary is where Japanese tense lives: the stem of
+				// 読ん carries none, and た says past on its own. Captured here
+				// because the morpheme ID is only assigned later.
+				if t := m.Feat("tense"); t != "" && cur.tense == "" {
+					cur.tense = t
+				}
 				awaiting = false
 			default:
 				end := i
@@ -718,8 +738,24 @@ func (p *jaParse) morphology(c *Clause, sp jaSpan) {
 		seen[m.ID] = true
 		p.mergeFeats(c, i)
 	}
-	if c.Tense == "" {
-		c.Tense = "present"
+	// An undetermined tense stays undetermined. Defaulting it to "present"
+	// here is what made 「読んだ」 come out as "reads": the clause carried a
+	// present tense the analysis never established, and it outranked the past
+	// that the auxiliary た actually says. Unknown is a value; present is a
+	// claim, and only the morphology may make it.
+	if c.Tense == "" && sp.tense != "" {
+		c.Tense = sp.tense
+	} else if c.Tense == "" {
+		// The clause carries no tense and the scan captured none, so compose it
+		// from the auxiliaries now that their IDs exist.
+		for _, id := range c.Auxiliaries {
+			if am := p.b.Morph(id); am != nil {
+				if t := jaAuxiliaryTense(am); t != "" {
+					c.Tense = t
+					break
+				}
+			}
+		}
 	}
 	if c.Polarity == "" {
 		c.Polarity = "positive"
@@ -730,6 +766,31 @@ func (p *jaParse) morphology(c *Clause, sp jaSpan) {
 			c.Causation = jaAppendNote(c.Causation, "evidential")
 		}
 	}
+}
+
+// jaAuxiliaryTense returns the tense an auxiliary contributes to the verb it
+// attaches to.
+//
+// The analyser reports a dictionary form, so the た of 読んだ arrives as だ. In
+// auxiliary position that is the ta-form and means past; as a clause predicate
+// on its own だ is the plain copula and means present. Position decides, and a
+// caller that has the morpheme in auxiliary position is the only one that can.
+func jaAuxiliaryTense(m *forest.Morph) string {
+	if m == nil {
+		return ""
+	}
+	if t := m.Feat("tense"); t != "" {
+		return t
+	}
+	switch m.Surface {
+	case "た", "だ", "でした", "であった", "だった":
+		return "past"
+	case "ません", "ない":
+		return "present"
+	case "ませんでした", "なかった":
+		return "past"
+	}
+	return ""
 }
 
 func (p *jaParse) mergeFeats(c *Clause, i int) {

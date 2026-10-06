@@ -33,9 +33,12 @@ func TestJapaneseRoleBindingGolden(t *testing.T) {
 			roles: map[string]string{"agent": "太郎", "recipient": "花子", "theme": "本"},
 		},
 		{
+			// WORK.04 is READ. The table used to put PERCEIVE.01 first, so
+			// 「本を読んだ」 came out as "saw a book" even though the READ
+			// construction existed and was unreachable.
 			src:   "太郎が本を読んだ。",
-			sense: "PERCEIVE.01",
-			roles: map[string]string{"experiencer": "太郎", "stimulus": "本"},
+			sense: "WORK.04",
+			roles: map[string]string{"agent": "太郎", "theme": "本"},
 		},
 	}
 	for _, tc := range cases {
