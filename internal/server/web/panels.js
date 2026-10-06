@@ -359,11 +359,115 @@
         ]);
       })) : h('p', { class: 'muted-none', text: selected ? 'no other candidate survived verification.' : 'no candidate was verified.' })));
 
+    // Stage metrics. The funnel is cumulative — a stage only counts when every
+    // earlier stage counted for the same sentence — so the numbers are read
+    // together, and the four candidate counts are separate claims: raw is what
+    // the realizer produced, eligible is what survived the hard gate,
+    // certified is what the equivalence verifier actually proved, and selected
+    // is what came out. Collapsing eligible and certified is how a candidate
+    // the system merely declined to reject ends up reported as verified.
+    node.appendChild(stageMetricsPanel(resp.stageMetrics));
+
     var warn = arr(resp.warnings);
     node.appendChild(section('warnings', warn.length ? warn.length + ' item(s)' : null,
       warn.length ? notes(warn) : h('p', { class: 'muted-none', text: 'none.' })));
 
     return { node: node, inspect: { result: resp.result, warnings: resp.warnings } };
+  }
+
+  // stageMetricsPanel renders the cumulative funnel and the two diagnostics
+  // that say where a sentence stopped.
+  //
+  // The unresolved-clause-head table is here rather than buried in the JSON
+  // because it is the thing that decides what to work on next, and it is only
+  // useful if it separates the causes: a missing dictionary entry, a parser
+  // that attached the wrong word, and a clause with no predicate at all send
+  // three people to three different tables. A single count of "unknown
+  // predicates" sends all of them to the dictionary.
+  function stageMetricsPanel(m) {
+    m = m || {};
+    function frac(a, b) {
+      a = num(a, 0); b = num(b, 0);
+      return b > 0 ? a + '/' + b : String(a);
+    }
+    var rows = [
+      ['morphology', frac(m.tokens - num(m.opaqueTokens, 0), m.tokens),
+        num(m.opaqueTokens, 0) + ' opaque token(s)'],
+      ['predicate', frac(m.predicatesResolved, m.predicatesTotal),
+        num(m.openPositions, 0) + ' open position(s)'],
+      ['semantic frame', frac(m.framesResolved, m.framesTotal), null],
+      ['construction', frac(m.constructionsSelected, m.constructionsTotal), null]
+    ];
+    var body = h('div', { class: 'list' }, rows.map(function (r) {
+      return h('div', { class: 'row' }, [
+        h('div', { class: 'row-main' }, [
+          h('div', { class: 'row-main-text', text: r[0] }),
+          r[2] ? h('div', { class: 'row-meta', text: r[2] }) : null
+        ]),
+        h('div', { class: 'row-side' }, [badge('w ' + r[1])])
+      ]);
+    }));
+
+    body.appendChild(h('p', { class: 'faint', text: 'funnel is cumulative: a stage counts only when every earlier stage counted for this sentence' }));
+
+    var funnel = h('div', { class: 'list' }, [
+      ['raw candidates', num(m.rawCandidates, 0)],
+      ['eligible (passed the hard gate)', num(m.eligibleCandidates, 0)],
+      ['certified (equivalence proved)', num(m.certifiedCandidates, 0)],
+      ['selected', num(m.selected, 0)]
+    ].map(function (r) {
+      return h('div', { class: 'row' }, [
+        h('div', { class: 'row-main' }, h('div', { class: 'row-main-text', text: r[0] })),
+        h('div', { class: 'row-side' }, [badge('w ' + r[1])])
+      ]);
+    }));
+    funnel.appendChild(h('p', {
+      class: 'faint',
+      text: 'passing the gate and proving equivalence are different claims; a candidate the ' +
+        'verifier merely declined to reject is eligible, not certified'
+    }));
+    body.appendChild(h('p', { class: 'faint', text: 'candidate funnel' }));
+    body.appendChild(funnel);
+
+    var gaps = arr(m.predicateGaps);
+    if (gaps.length) {
+      var byCause = {};
+      gaps.forEach(function (g) {
+        var k = str(g.cause, 'unknown');
+        byCause[k] = (byCause[k] || 0) + 1;
+      });
+      var head = 'unresolved clause heads — ' + gaps.length + ', by cause: ' +
+        Object.keys(byCause).sort(function (a, b) { return byCause[b] - byCause[a]; })
+          .map(function (k) { return k + ' ' + byCause[k]; }).join(', ');
+      body.appendChild(h('p', { class: 'faint', text: head }));
+      body.appendChild(h('div', { class: 'list' }, gaps.slice(0, 12).map(function (g) {
+        return h('div', { class: 'row' }, [
+          h('div', { class: 'row-main' }, [
+            h('div', { class: 'row-main-text', text: str(g.surface, '(no surface)') }),
+            h('div', { class: 'row-meta', text: [str(g.lemma, ''), str(g.pos, ''),
+              str(g.tier, ''), str(g.backend, '')].filter(Boolean).join(' · ') }),
+            g.note ? h('div', { class: 'row-meta', text: g.note }) : null
+          ]),
+          h('div', { class: 'row-side' }, [badge('w ' + str(g.cause, ''))])
+        ]);
+      })));
+      if (gaps.length > 12) {
+        body.appendChild(h('p', { class: 'faint', text: '… and ' + (gaps.length - 12) + ' more; the JSON has all of them' }));
+      }
+    }
+
+    var losses = arr(m.frameLosses);
+    if (losses.length) {
+      var counts = {};
+      losses.forEach(function (l) { counts[l] = (counts[l] || 0) + 1; });
+      body.appendChild(h('p', {
+        class: 'faint',
+        text: 'arguments lost: ' + Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; })
+          .map(function (k) { return k + ' ×' + counts[k]; }).join(', ')
+      }));
+    }
+
+    return section('stage metrics', null, body);
   }
 
   function questionCard(q, ctx) {
