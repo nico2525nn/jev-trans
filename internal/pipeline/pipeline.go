@@ -363,6 +363,12 @@ func (e *Engine) Translate(ctx context.Context, req Request) (*Response, error) 
 		}
 	}
 
+	// ---- stage metrics ---------------------------------------------------
+	//
+	// Computed here, by the code that did the work, and cumulative: a stage
+	// only counts when every earlier stage counted for the same sentence.
+	resp.Metrics = stageMetrics(mf, srcGraph, projection, raw, candidates)
+
 	// ---- 17. FINAL OUTPUT -------------------------------------------------
 	rec.Do(trace.StageOutput, "final output", func(s *trace.Span) error {
 		resp.Result.Candidates = candidates
@@ -1024,4 +1030,102 @@ func dedupe(in []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// stageMetrics fills in the pipeline's own account of the run.
+//
+// Every predicate, frame and construction is counted, not the best one: a
+// sentence with three clauses where two resolve has not resolved its predicates.
+// The fallback construction is excluded because it carries no verb, so counting
+// it would report a construction for every sentence that got this far.
+func stageMetrics(
+	mf *forest.MorphForest,
+	g *jlir.Graph,
+	projection *plan.Projection,
+	raw []forest.Candidate,
+	accepted []Candidate,
+) StageMetrics {
+	var m StageMetrics
+
+	if mf != nil {
+		best := mf.Best()
+		m.Tokens = len(best.Morphs)
+		for _, mo := range best.Morphs {
+			if !mo.Dict {
+				m.OpaqueTokens++
+			}
+		}
+		m.MorphologyComplete = m.OpaqueTokens == 0
+	}
+
+	m.PredicatesTotal = len(g.Events)
+	for _, e := range g.Events {
+		if e.Predicate != "" && !strings.HasPrefix(e.Predicate, "UNKNOWN") {
+			m.PredicatesResolved++
+		}
+	}
+	m.PredicatesComplete = m.PredicatesTotal > 0 && m.PredicatesResolved == m.PredicatesTotal
+
+	m.FramesTotal = len(g.Events)
+	for _, e := range g.Events {
+		if frameFilled(g, e) {
+			m.FramesResolved++
+		}
+	}
+	m.FramesComplete = m.FramesTotal > 0 && m.FramesResolved == m.FramesTotal
+
+	if projection != nil {
+		for _, e := range projection.Events {
+			m.ConstructionsTotal++
+			if c := e.Construction; c != "" && !strings.Contains(c, "FALLBACK") {
+				m.ConstructionsSelected++
+			}
+		}
+	}
+	m.ConstructionsComplete = m.ConstructionsTotal > 0 &&
+		m.ConstructionsSelected == m.ConstructionsTotal
+
+	m.RawCandidates = len(raw)
+	m.AcceptedCandidates = len(accepted)
+	m.Verified = len(accepted)
+	m.OpenPositions = len(g.Unresolved())
+
+	// Cumulative: the funnel only decreases.
+	if !m.MorphologyComplete {
+		m.PredicatesComplete, m.FramesComplete, m.ConstructionsComplete = false, false, false
+	}
+	if !m.PredicatesComplete {
+		m.FramesComplete, m.ConstructionsComplete = false, false
+	}
+	if !m.FramesComplete {
+		m.ConstructionsComplete = false
+	}
+	return m
+}
+
+// frameFilled reports whether an event carries every role its ontology frame
+// declares mandatory. "the argument map is non-empty" is not a filled frame: a
+// TRANSFER event with only a theme has lost both its agent and its recipient,
+// and that is the case the verifier has to catch rather than pass.
+func frameFilled(g *jlir.Graph, e *jlir.Event) bool {
+	if e == nil || len(e.Args) == 0 {
+		return false
+	}
+	pred := g.Predicate(e.Predicate)
+	if pred == nil {
+		return false
+	}
+	seen := map[string]bool{}
+	for r := range e.Args {
+		seen[r] = true
+	}
+	for _, spec := range pred.Args {
+		if !spec.Required {
+			continue
+		}
+		if !seen[spec.Role] {
+			return false
+		}
+	}
+	return true
 }

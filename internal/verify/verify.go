@@ -21,6 +21,7 @@ import (
 
 	"github.com/nico/jev-trans/internal/jlir"
 	"github.com/nico/jev-trans/internal/lang"
+	"github.com/nico/jev-trans/internal/ontology"
 	"github.com/nico/jev-trans/internal/trace"
 )
 
@@ -220,7 +221,12 @@ func Verify(src, tgt *jlir.Graph, srcLang, tgtLang lang.Lang) *Result {
 		srcLang: srcLang, tgtLang: tgtLang,
 		conf: defaultConfidence(),
 		res:  &Result{Confidence: map[string]float64{}},
+		onto: ontology.Default(),
 	}
+
+	// Before anything is compared: is the source itself understood? Comparing
+	// two damaged graphs finds no differences and looks like a pass.
+	v.checkSourceFrames()
 
 	if src == nil || tgt == nil {
 		v.res.Status = StatusUnparsable
@@ -294,6 +300,60 @@ type verifier struct {
 	// distinction the source cannot supply.
 	ambiguous       bool
 	underdetermined bool
+
+	// onto answers what an event's frame requires, so the verifier can tell a
+	// source analysis that lost an argument from one that never had it.
+	onto *ontology.Registry
+}
+
+// checkSourceFrames refuses to certify a translation whose SOURCE analysis is
+// itself incomplete.
+//
+// This is the gate that should have caught 「太郎が花子に本を渡した。」 coming
+// out as "A books gives a book.". The source graph for that sentence binds only
+// a theme: the agent and the recipient were lost during analysis. The verifier
+// then compared two equally broken graphs, found no difference, and reported
+// LOSSY — a confident-looking verdict on a sentence whose source meaning was
+// never captured.
+//
+// Semantic equivalence is a claim about two understood graphs. If one side is
+// not understood, the claim cannot be made, and the only honest answers are
+// UNDETERMINED or rejection. Silently comparing damage to damage is how the
+// system ends up confident and wrong.
+func (v *verifier) checkSourceFrames() {
+	if v.onto == nil || v.src == nil {
+		return
+	}
+	for _, e := range v.src.Events {
+		if e.Predicate == "" || strings.HasPrefix(e.Predicate, "UNKNOWN") {
+			continue
+		}
+		sense, ok := v.onto.Sense(e.Predicate)
+		if !ok {
+			continue
+		}
+		var missing []string
+		for _, spec := range sense.Args {
+			if !spec.Required {
+				continue
+			}
+			if !e.HasRole(spec.Role) {
+				missing = append(missing, spec.Role)
+			}
+		}
+		if len(missing) == 0 {
+			continue
+		}
+		sort.Strings(missing)
+		v.add(hard(DiffFrame, string(e.ID), e.Predicate, "",
+			"the source analysis lost the mandatory argument(s) "+strings.Join(missing, ", ")+
+				" of "+e.Predicate+"; equivalence cannot be certified against an incomplete source"),
+			DimPropositional, lossRoleMissing, DiffFrame)
+		v.underdetermined = true
+		v.note("source event %s (%s) is missing its mandatory role(s) %v; "+
+			"this is an analysis gap, not a translation difference",
+			e.ID, e.Predicate, missing)
+	}
 }
 
 func (v *verifier) note(format string, args ...any) {
@@ -380,6 +440,10 @@ func soft(diff Dimension, item, srcVal, tgtVal, detail string) Diff {
 // Dimension is the feature family a Diff belongs to. It is a distinct type so
 // that a diff dimension can never be confused with a loss dimension.
 type Dimension string
+
+// DiffFrame is its own dimension because a missing mandatory argument is not a
+// difference between two readings of a sentence; it is a hole in one of them.
+const DiffFrame = "frame"
 
 // --- hallucination check (plan.md §22) ------------------------------------
 

@@ -112,6 +112,7 @@ type Response struct {
 	Result Result `json:"result"`
 
 	Trace         *trace.Event    `json:"trace"`
+	Metrics       StageMetrics    `json:"stageMetrics"`
 	Summary       trace.Summary   `json:"summary"`
 	JLIR          JLIRPair        `json:"jlir"`
 	Artifacts     Artifacts       `json:"artifacts"`
@@ -150,6 +151,60 @@ type JLIRPair struct {
 	Target *jlir.Graph `json:"target,omitempty"`
 	// Readings is the source semantic forest.
 	Readings []semantics.Reading `json:"readings,omitempty"`
+}
+
+// StageMetrics is the pipeline's own account of how far a sentence got.
+//
+// It lives here, in the code that actually did the work, rather than being
+// re-derived by the measurement script. An external measurer inspecting the
+// JSON has to guess what a field means, and it guessed wrong: it counted stages
+// independently, so a sentence could "pass" construction after failing the
+// frame stage, which made the funnel non-monotonic and the numbers beside it
+// meaningless.
+//
+// Every Complete flag below is CUMULATIVE and requires every earlier stage to
+// have completed as well. A sentence that fails morphology cannot be counted at
+// any later stage.
+type StageMetrics struct {
+	// Morphology is complete when the input was segmented with no unresolved
+	// surface. Coverage is total by construction — unknown surfaces are emitted
+	// as morphemes rather than dropped — so this is about dictionary coverage.
+	MorphologyComplete bool `json:"morphologyComplete"`
+	Tokens             int  `json:"tokens"`
+	OpaqueTokens       int  `json:"opaqueTokens"`
+
+	// Predicates are complete when every clause head resolved to an ontology
+	// predicate. One resolved clause among three is not a resolved sentence.
+	PredicatesComplete bool `json:"predicatesComplete"`
+	PredicatesTotal    int  `json:"predicatesTotal"`
+	PredicatesResolved int  `json:"predicatesResolved"`
+
+	// Frames are complete when every event carries the roles its ontology frame
+	// declares mandatory. A non-empty argument map is not a filled frame.
+	FramesComplete bool `json:"framesComplete"`
+	FramesTotal    int  `json:"framesTotal"`
+	FramesResolved int  `json:"framesResolved"`
+
+	// Constructions are available when a construction realizing the sense was
+	// selected for every event. The generic fallback frame does not count: it
+	// carries no verb.
+	ConstructionsComplete bool `json:"constructionsComplete"`
+	ConstructionsTotal    int  `json:"constructionsTotal"`
+	ConstructionsSelected int  `json:"constructionsSelected"`
+
+	// RawCandidates is what the realizer produced, before verification.
+	// AcceptedCandidates is what survived the semantic hard gate and ranking.
+	// Reporting only the latter hides the exact stage that rejects work.
+	RawCandidates      int `json:"rawCandidates"`
+	AcceptedCandidates int `json:"acceptedCandidates"`
+	Verified           int `json:"verified"`
+
+	// OpenPositions counts ambiguity carried unresolved into the target, which
+	// is plan.md section 13 and 15 doing their job rather than a defect.
+	OpenPositions int `json:"openPositions"`
+	// RejectedWithRule counts candidates the verifier refused, with the rule
+	// names available on Result.Candidates.
+	RejectedByGate int `json:"rejectedByGate"`
 }
 
 // Artifacts is everything the UI renders as evidence.

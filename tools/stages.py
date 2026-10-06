@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
 """Stage-by-stage measurement of JEV-Trans on real prose.
 
-plan2.md asks for more than a single translated/not-translated count, because
-that number does not say which layer to fix next. This reports where sentences
-survive and where they stop:
+This script does not guess. It reads `stageMetrics`, which the pipeline emits
+from the code that did the work, because the previous version re-derived every
+stage from the response JSON and got four things wrong:
 
-    morphology resolved     the analyser segmented the whole sentence
-    predicate resolved      a clause head became an ontology predicate
-    semantic frame resolved the event has the roles its frame calls for
-    construction available  a target construction realizes it
-    candidate generated     the realizer produced a surface string
-    verification passed     the hard gate accepted it
+  - stages were counted independently, so a sentence could pass construction
+    after failing the frame stage and the "funnel" went 26 then 44;
+  - predicates counted as resolved if ANY clause head resolved;
+  - a frame counted as filled if the argument map was merely non-empty;
+  - candidates and verified were both read from the post-gate result, so they
+    were the same number by construction.
 
-    opaque span ratio       unresolved surfaces over all surfaces
+Each of those made the next fix a guess. The pipeline now reports what it
+actually did, cumulatively, and this script only sums it.
 
-A sentence is counted at the last stage it reached, so the stages sum to the
-corpus total and the drop between two rows is exactly the work at that layer.
+    $ python3 tools/stages.py corpus/sentences.json [--limit N] [--show N]
 
-    python3 tools/stages.py corpus/sentences.json [--limit N]
+  morphology resolved     no opaque surfaces
+  predicate resolved      every clause head became an ontology predicate
+  semantic frame resolved every event carries its frame's mandatory roles
+  construction available  a sense-realizing construction was selected, and the
+                          generic fallback frame does not count
+  candidate generated     the realizer produced something
+  verification passed     the semantic hard gate accepted it
 """
 import json
 import subprocess
@@ -26,105 +32,88 @@ import sys
 BIN = "./jevtrans"
 
 STAGES = [
-    ("morphology resolved", "morphology"),
-    ("predicate resolved", "predicate"),
-    ("semantic frame resolved", "frame"),
-    ("construction available", "construction"),
-    ("candidate generated", "candidate"),
-    ("verification passed", "verified"),
+    ("morphology resolved", "morphologyComplete"),
+    ("predicate resolved", "predicatesComplete"),
+    ("semantic frame resolved", "framesComplete"),
+    ("construction available", "constructionsComplete"),
+    ("candidate generated", "rawCandidates", "positive"),
+    ("verification passed", "verified", "positive"),
 ]
 
 
 def measure(sentence):
-    """Return the set of stages this sentence reached, plus opaque surfaces."""
+    """Return the pipeline's own metrics for one sentence."""
     p = subprocess.run(
         [BIN, "translate", "--text", sentence, "--src", "ja", "--tgt", "en", "--json"],
-        capture_output=True, timeout=90,
+        capture_output=True, timeout=120,
     )
     if not p.stdout.strip():
-        return set(), []
-    d = json.loads(p.stdout.decode("utf-8"))
-    reached = set()
-
-    morph = (d.get("artifacts") or {}).get("morph") or {}
-    paths = morph.get("paths") or []
-    if paths and paths[0].get("morphs"):
-        reached.add("morphology")
-
-    g = d.get("jlir", {}).get("source") or {}
-    events = g.get("events") or []
-    if events and not all(e["predicate"].startswith("UNKNOWN") for e in events):
-        reached.add("predicate")
-        # A frame is resolved when the event carries at least the roles the
-        # ontology declares mandatory for its predicate. An empty argument map
-        # means the frame was not filled, which is a different failure from not
-        # knowing the predicate.
-        if any(len(e.get("args") or {}) > 0 for e in events):
-            reached.add("frame")
-
-    # "construction available" means a construction was selected that actually
-    # realizes the sense. The generic fallback frame is always selected for an
-    # event that has one, so counting it would report 88/88 and say nothing; it
-    # is excluded precisely because it carries no verb.
-    art = d.get("artifacts") or {}
-    proj = art.get("projection") or {}
-    for e in proj.get("events") or []:
-        c = e.get("construction") or ""
-        if c and "FALLBACK" not in c:
-            reached.add("construction")
-            break
-
-    cands = ((d.get("result") or {}).get("candidates")) or []
-    if cands:
-        reached.add("candidate")
-
-    if (d.get("result") or {}).get("selected"):
-        reached.add("verified")
-
-    opaque = []
-    mf = (art.get("morph") or {}).get("paths") or [{}]
-    for m in (mf[0].get("morphs") or []):
-        if not m.get("dict"):
-            opaque.append(m.get("surface", ""))
-    return reached, [o for o in opaque if o]
+        return None
+    try:
+        d = json.loads(p.stdout.decode("utf-8"))
+    except json.JSONDecodeError:
+        return None
+    m = d.get("stageMetrics")
+    if not m:
+        # An older binary. Say so rather than silently reporting nothing.
+        return {"__missing__": True}
+    return m
 
 
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else "corpus/sentences.json"
     limit = None
-    if "--limit" in sys.argv:
-        limit = int(sys.argv[sys.argv.index("--limit") + 1])
+    show = 5
+    args = sys.argv[2:]
+    if "--limit" in args:
+        limit = int(args[args.index("--limit") + 1])
+    if "--show" in args:
+        show = int(args[args.index("--show") + 1])
 
     sentences = json.load(open(path, encoding="utf-8"))
     if limit:
         sentences = sentences[:limit]
     total = len(sentences)
 
-    counts = {k: 0 for k, _ in STAGES}
-    opaque_total = 0
-    surface_total = 0
-    last_stage = {k: 0 for k, _ in STAGES}
-    unattributed = 0
+    counts = {name: 0 for name, *_ in STAGES}
+    tokens = opaque = 0
+    raw = accepted = 0
+    reached_verb = 0
+    missing_metrics = 0
+    examples = {}
 
     for s in sentences:
-        reached, opaque = measure(s)
-        surface_total += 1 + len(opaque)
-        opaque_total += len(opaque)
-        # Cumulative: reaching a stage implies reaching every earlier one, so
-        # the rows are a funnel and the drop between two rows is the work at
-        # that layer.
-        hit = False
-        for name, key in STAGES:
-            if key in reached:
-                counts[name] += 1
-                hit = True
-        if not hit:
-            unattributed += 1
+        m = measure(s)
+        if m is None:
+            continue
+        if m.get("__missing__"):
+            missing_metrics += 1
+            continue
+        tokens += m.get("tokens", 0)
+        opaque += m.get("opaqueTokens", 0)
+        raw += m.get("rawCandidates", 0)
+        accepted += m.get("acceptedCandidates", 0)
+
+        for name, key, *kind in STAGES:
+            if kind and kind[0] == "positive":
+                ok = m.get(key, 0) > 0
+            else:
+                ok = bool(m.get(key))
+            # Cumulative: a later stage only counts when every earlier one did.
+            if not ok:
+                break
+            counts[name] += 1
+            if name == "candidate generated":
+                reached_verb += 1
+                examples.setdefault(name, (s, m))
 
     print(f"\n{total} sentences\n")
-    width = max(len(n) for n, _ in STAGES)
+    if missing_metrics:
+        print(f"  ({missing_metrics} sentence(s) had no stageMetrics; rebuild the binary)\n")
+
+    width = max(len(n) for n, *_ in STAGES)
     prev = None
-    for name, _ in STAGES:
+    for name, *_ in STAGES:
         n = counts[name]
         delta = ""
         if prev is not None:
@@ -132,10 +121,15 @@ def main():
             delta = f"   (-{lost})" if lost else ""
         print(f"  {name.ljust(width)}  {n:3}/{total}{delta}")
         prev = n
-    if unattributed:
-        print(f"  {'(stopped before morphology)'.ljust(width)}  {unattributed:3}/{total}")
-    ratio = (opaque_total / surface_total * 100) if surface_total else 0.0
-    print(f"\n  opaque span ratio      {opaque_total}/{surface_total} = {ratio:.1f}%")
+
+    ratio = (opaque / tokens * 100) if tokens else 0.0
+    print(f"\n  opaque surfaces           {opaque}/{tokens} = {ratio:.1f}%")
+    print(f"  raw candidates           {raw}")
+    print(f"  accepted by the gate     {accepted}")
+    print(f"  dropped by the gate      {raw - accepted}")
+    for name, (s, m) in examples.items():
+        print(f"\n  e.g. {name}: {s}")
+        print("       " + json.dumps(m, ensure_ascii=False, sort_keys=True))
     print()
 
 
