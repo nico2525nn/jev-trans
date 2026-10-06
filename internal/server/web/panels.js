@@ -458,6 +458,26 @@
       }
     }
 
+    // Why nothing was certified. A single "certified: 0" is indistinguishable
+    // between a verifier that is strict and one that has no way to check what
+    // it produced; the slugs say which, and the first one is the cheapest
+    // capability to build.
+    var blockers = arr(m.certificationBlockers);
+    if (blockers.length) {
+      var counts = {};
+      blockers.forEach(function (b) { counts[b] = (counts[b] || 0) + 1; });
+      body.appendChild(h('p', {
+        class: 'faint',
+        text: 'why nothing was certified: ' + Object.keys(counts)
+          .sort(function (a, b) { return counts[b] - counts[a]; })
+          .map(function (k) { return k + ' ×' + counts[k]; }).join(', ')
+      }));
+      body.appendChild(h('p', {
+        class: 'faint',
+        text: 'a blocker is a reason equivalence could not be PROVED, not a mistranslation'
+      }));
+    }
+
     var losses = arr(m.frameLosses);
     if (losses.length) {
       var counts = {};

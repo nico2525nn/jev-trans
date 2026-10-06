@@ -1181,9 +1181,14 @@ func stageMetrics(
 	}
 	m.ShortlistedCandidates = len(accepted)
 	for _, c := range accepted {
-		if candidateCertified(c) {
+		blockers := certificationBlockers(c)
+		if len(blockers) == 0 {
 			m.CertifiedCandidates++
 			m.Verified++
+			continue
+		}
+		for _, b := range blockers {
+			m.CertificationBlockers = appendUniqueString(m.CertificationBlockers, b)
 		}
 	}
 	m.OpenPositions = len(g.Unresolved())
@@ -1405,25 +1410,147 @@ func firstProvNote(e *jlir.Event, contains string) string {
 // has been shown that the system could not tell. Counting that as verified
 // would put a number in the report that the evidence does not support.
 func candidateCertified(c Candidate) bool {
+	return len(certificationBlockers(c)) == 0
+}
+
+// certificationBlockers names every reason a candidate is eligible but not
+// certified, as stable slugs.
+//
+// A single "certified: 0" cannot be acted on. It is indistinguishable between
+// "the verifier is strict" and "the verifier has no way to check this", and
+// those call for opposite responses: the first means do not loosen anything,
+// the second means build the capability. Reporting the blockers makes the
+// second kind visible and says which of them is common enough to build first.
+//
+// The order is fixed so that the first slug reported for a candidate is the most
+// fundamental one, and aggregation over a corpus is therefore a count of causes
+// rather than an artefact of iteration order.
+func certificationBlockers(c Candidate) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(slug string) {
+		if slug == "" || seen[slug] {
+			return
+		}
+		seen[slug] = true
+		out = append(out, slug)
+	}
+
 	switch Status(c.Status) {
 	case StatusExact, StatusGood:
 	default:
-		return false
-	}
-	for _, d := range c.Diffs {
-		if d.Severity == verify.SeverityHard {
-			return false
+		switch Status(c.Status) {
+		case StatusUnderdetermined:
+			add(BlockerUnderdetermined)
+		case StatusAmbiguous:
+			add(BlockerAmbiguous)
+		case StatusLossy:
+			add(BlockerLossy)
+		case StatusUnsupported:
+			add(BlockerUnsupportedInformation)
+		default:
+			// UNPARSABLE, DIVERGENT, or anything the pipeline adds later.
+			add("status_" + string(c.Status))
 		}
 	}
 	if len(c.Unsupported) > 0 {
-		return false
+		add(BlockerUnsupportedInformation)
 	}
-	for _, n := range c.Notes {
-		if strings.Contains(n, "UNDERDETERMINED") {
-			return false
+	if len(c.Diffs) > 0 {
+		if blocker, ok := worstDiffBlocker(c.Diffs); ok {
+			add(blocker)
 		}
 	}
-	return true
+	if blocker, ok := notesBlocker(c.Notes); ok {
+		add(blocker)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Certification blocker slugs. They are stable strings rather than prose
+// because they are aggregated across a corpus and printed in the UI, and
+// because a slug can be counted while a sentence of explanation cannot.
+const (
+	// BlockerUnderdetermined: the verifier could not tell whether the target
+	// means what the source means. Not a mistranslation — an absence of proof.
+	BlockerUnderdetermined = "undetermined"
+	// BlockerAmbiguous: an open reading survived into the target and the
+	// system declined to pick one. Correct behaviour, uncertified outcome.
+	BlockerAmbiguous = "ambiguity_preserved"
+	// BlockerLossy: something known was dropped, usually an argument the target
+	// language could not carry.
+	BlockerLossy = "lossy"
+	// BlockerUnsupportedInformation: the target asserts something with no
+	// source. This one is a design failure rather than a limitation.
+	BlockerUnsupportedInformation = "unsupported_information"
+	// BlockerOpenQuestion: an interactive disambiguation is outstanding.
+	BlockerOpenQuestion = "open_question"
+	// BlockerReferentUnverified: the referent alignment could not be checked
+	// from the surface forms alone and rests on the pipeline's own identity
+	// mapping.
+	BlockerReferentUnverified = "referent_not_independently_verified"
+	// BlockerDiff: a difference of some other dimension was recorded.
+	BlockerDiff = "difference_recorded"
+)
+
+// worstDiffBlocker picks the most fundamental blocker a set of diffs implies.
+// Dimensions are ordered by how much they would change the proposition, so the
+// slug describes the largest thing in doubt rather than the first one found.
+func worstDiffBlocker(diffs []verify.Diff) (string, bool) {
+	if len(diffs) == 0 {
+		return "", false
+	}
+	best := -1
+	slug := BlockerDiff
+	for _, d := range diffs {
+		var rank int
+		switch d.Dimension {
+		case verify.DiffEntity, verify.DiffCoreference:
+			rank, slug = 3, BlockerReferentUnverified
+		case verify.DiffPredicate:
+			rank, slug = 3, "predicate_sibling"
+		case verify.DiffScope, verify.DiffQuantifier:
+			rank, slug = 2, "scope_not_resolved"
+		case verify.DiffTense, verify.DiffAspect, verify.DiffPolarity, verify.DiffModality:
+			rank, slug = 2, "tense_open"
+		case verify.DiffNumber:
+			rank, slug = 1, "number_unknown"
+		case verify.DiffGender:
+			rank, slug = 1, "gender_unknown"
+		case verify.DiffPragmatics:
+			rank, slug = 1, "pragmatic_loss"
+		case verify.DiffRole:
+			rank, slug = 2, "role_dropped"
+		default:
+			rank = 1
+		}
+		if rank > best {
+			best = rank
+		}
+	}
+	if best < 0 {
+		return "", false
+	}
+	return slug, true
+}
+
+// notesBlocker recognises the markers the pipeline writes into a candidate's
+// notes when it knows it could not finish the job.
+func notesBlocker(notes []string) (string, bool) {
+	for _, n := range notes {
+		switch {
+		case strings.Contains(n, "UNDERDETERMINED"):
+			return "undetermined", true
+		case strings.Contains(n, "UNDECIDED"):
+			return "ambiguity_preserved", true
+		case strings.Contains(n, "lexical_gap"):
+			return "target_lexical_gap", true
+		case strings.Contains(n, "not licensed by the source"):
+			return "target_grammatical_demand", true
+		}
+	}
+	return "", false
 }
 
 // frameLosses names why an event is missing a role its frame requires.
@@ -1460,6 +1587,21 @@ func frameLosses(g *jlir.Graph, e *jlir.Event) []string {
 	}
 	sort.Strings(out)
 	return dedupeStrings(out)
+}
+
+// appendUniqueString appends s unless it is already present, keeping the first
+// occurrence. Order is the caller's; the values are slugs and callers that need
+// determinism sort them.
+func appendUniqueString(list []string, s string) []string {
+	if s == "" {
+		return list
+	}
+	for _, v := range list {
+		if v == s {
+			return list
+		}
+	}
+	return append(list, s)
 }
 
 func dedupeStrings(in []string) []string {

@@ -110,6 +110,7 @@ def main():
     examples = {}
     losses = {}
     gaps = []
+    blockers = {}
 
     for s in sentences:
         m = measure(s)
@@ -128,6 +129,8 @@ def main():
         for why in m.get("frameLosses") or []:
             losses[why] = losses.get(why, 0) + 1
         gaps.extend(m.get("predicateGaps") or [])
+        for b in m.get("certificationBlockers") or []:
+            blockers[b] = blockers.get(b, 0) + 1
 
         for name, key, *kind in STAGES:
             if kind and kind[0] == "positive":
@@ -169,6 +172,12 @@ def main():
     ):
         print(f"  {label:<24} {value}")
     print(f"  dropped by the gate      {raw - eligible}")
+    if blockers:
+        print("\n  why nothing was certified")
+        for why, n in sorted(blockers.items(), key=lambda kv: (-kv[1], kv[0])):
+            print(f"    {n:3}  {why}")
+        print("    (a blocker is a reason the system could not PROVE equivalence, not a")
+        print("     mistranslation; the first row is what to build capability for)")
     if losses:
         print("\n  why arguments were lost")
         for why, n in sorted(losses.items(), key=lambda kv: -kv[1]):

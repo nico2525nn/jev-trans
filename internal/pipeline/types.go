@@ -209,6 +209,13 @@ type StageMetrics struct {
 	// CertifiedCandidates proved equivalence: no hard diff, no unsupported
 	// information, no unresolved reading left open.
 	CertifiedCandidates int `json:"certifiedCandidates"`
+	// CertificationBlockers names, per sentence, why the candidates that
+	// survived the gate were not proved equivalent. CertifiedCandidates alone
+	// cannot say whether the verifier is strict or merely unable to check, and
+	// those call for opposite responses, so the reasons are counted rather than
+	// summarised. Values are stable slugs.
+	CertificationBlockers []string `json:"certificationBlockers,omitempty"`
+
 	// ShortlistedCandidates is the size of the list the output stage chose from.
 	// It is the same number as EligibleCandidates today and is named separately
 	// because the two answer different questions: how many survived, and how
