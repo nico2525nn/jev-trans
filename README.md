@@ -245,21 +245,21 @@ internal/
 
 ### 達成目標と、そこからの距離
 
-現在（`tools/baselines/session-diff.md` に全表）:
+全表は [`tools/baselines/session-diff.md`](tools/baselines/session-diff.md)。
 
 ```
-                              4eae9af   current
-morphology fully resolved            68        68
-predicate  fully resolved             25   →    31
-semantic frame fully resolved          9   →    28
-unresolved clause heads               70   →    61
-raw candidates                       162   →   216
-eligible (gate passed)                 1   →     4
-certified (equivalence proved)         0        0
-selected                               1   →     4
+                            4eae9af   current
+morphology fully resolved        68        68
+predicate  fully resolved         25   →    31
+semantic frame fully resolved      9   →    28
+unresolved clause heads           70   →    61
+raw candidates                   162   →   211
+eligible (gate passed)             1   →     3
+certified (equivalence proved)     0        0
+selected                           1   →     3
 ```
 
-引数が失われた理由（`tools/baselines/session-diff.md`）:
+引数が失われた理由:
 
 ```
 no_arguments_bound                   49   →     0
@@ -272,16 +272,21 @@ missing_role:experiencer               2   →     0
 
 **`no_arguments_bound` 49 → 0 が実質的な変化です。** parser は日本語の省略主語を
 明示的な零 phrase として計画しますが、analyzer は「不在」しか見ていませんでした。
-両層的主語の形について認識が食い違い、その結果、日本が主語を落とした文は
-すべて引数のない event で終わっていました。引数 binder 自体には何も問題が
-ありませんでした — 渡ってきた節がすでに壊れていたのです。「引数が結べなかった」
-という報告が指していたのは binder ではなく、その上流の矛盾でした。+19 の
-frame 解決もここから出ています。
+両層的主語の形について認識が食い違い、日本が主語を落とした文はすべて引数のない
+event で終わっていました。引数 binder 自体には何も問題がなかった — 渡ってきた節が
+すでに壊れていたのです。「引数が結べなかった」という報告が指していたのは binder で
+あって、その上流の矛盾でした。+19 の frame 解決もここから出ています。
 
-**`certified` は 0 のままです。** hard gate を通ることと等価性を証明することは
-別の主張で、このコーパスではまだ証明された候補が一つもありません。4 つの選択
-済み候補はいずれも LOSSY です。Verifier を緩めて数字を上げることは、ここでは
-やってはいけません。
+**`eligible` は 1 → 4 → 3 と動きました。** 最後の 1 件減は「道が悪いので野原を歩く」で、
+直訳が "A road goes." だったものです。をでマークされた移動先が source graph から
+落ちていたため、target と source を比べる gate が「別の文の翻訳」に同意していました。
+この候補を失うのは意図した結果です。`野原` に英訳が無いので、推測で埋めるのでは
+なく未実現のまま残す必要があります。
+
+**`certified` は 0 のままです。** hard gate を通ることと等価性を証明することは別の
+主張で、このコーパスではまだ証明された候補が一つもありません。3 つの選択済み候補は
+いずれも LOSSY または AMBIGUOUS です。Verifier を緩めてこの数字を上げることは、ここ
+までの全ての数字を無意味にします。
 
 残りの内訳は `tools/stages.py` の `unresolved clause heads` に出ます。
 61 件中、50 件は語彙知識（`落ち` `ゆらい` `きらめき` — 宮沢賢治 1920 年代の
@@ -293,8 +298,7 @@ LexicalProvider を入れたのはこの分類がそのまま手を打つ先を�
 ### 2 つの morphological backend は別物
 
 `--morph builtin` と `--morph auto`（Sudachi）は同じ結果ではありません。
-全表は [`tools/baselines/session-diff.md`](tools/baselines/session-diff.md) に
-ありますが、要約はこうです。
+全表は [`tools/baselines/session-diff.md`](tools/baselines/session-diff.md)。
 
 ```
                           builtin   auto(Sudachi)
@@ -304,20 +308,14 @@ semantic frame fully resolved   36              28
 unresolved clause heads         40              61
 ```
 
-builtin は**前 1946 年の綴り**（`云ふ` など）を明示的に持っているので、述語と
-フレームは Sudachi よりよく解けました。一方、辞書に無い表層はすべて unknown
-token になるので morphology は大きく劣ります。
+builtin は**前 1946 年の綴り**（`云ふ` など）を明示的に持つので、述語とフレームは
+Sudachi よりよく解けます。一方、辞書に無い表層はすべて unknown token になるので
+morphology は大きく劣ります。
 
-どちらが一貫して良いわけでもありません。だからこそ両方を測るのであり、
-テストも `forEachBackend` で**環境変数ではなく engine の morphological registry**
-を切り替えます（環境変数はコマンドラインが engine を作る時にしか効かず、
-既に作られた engine の挙動は変わりません）。
-
-分類を出すのは `tools/stages.py` で、種別・parser の添付階層・backend・品詞の
-4 軸です。この 4 軸が無ければ 61 件は「全部辞書不足」としか読めず、辞書と
-構文解析と形態素解析のどこを直すべきかは分かりません。実際に、この分類を
-作ったことで 代名詞の POS 欠落、copula 判定、主語 zéro句の不整合、そして
-〜くなる 構文の 4 件が見つかりました。
+どちらが一貫して良いわけでもありません。だからこそ両方を測るのであり、テストも
+`forEachBackend` で**環境変数ではなく engine の morphological registry**を
+切り替えます（環境変数はコマンドラインが engine を作る時にしか効かず、既に作られた
+engine の挙動は変わりません）。
 
 ### 構造的な欠陥：劣化経路が無い
 
